@@ -35,3 +35,8 @@ jobs:
       - run: node --run test
       # Worker secrets are managed with `wrangler secret put`, not from CI
       - run: npx wrangler deploy --env production
+      # slash commands are defined on Discord's side; this replaces the whole list, so it's safe on every deploy
+      - run: node --run commands:register
+        env:
+          DISCORD_APPLICATION_ID: ${{ secrets.DISCORD_APPLICATION_ID }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}

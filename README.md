@@ -47,6 +47,7 @@ node --run test
 ## Deploying
 
 - There are two environments: local dev (`node --run dev`) and production. Every push to `main` deploys production, using the `CF_API_TOKEN` and `NPM_TOKEN` repository secrets.
+- Each deploy also registers the slash commands from `src/commands.ts` with Discord, using `DISCORD_APPLICATION_ID` and `DISCORD_BOT_TOKEN` secrets on the GitHub `production` environment.
 - Worker secrets are set with `wrangler secret put <NAME> --env production`: `DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY`, `DISCORD_BOT_TOKEN`, `NODECRAFT_CLIENT_ID`, `NODECRAFT_CLIENT_SECRET`, `CARD_ENCRYPTION_KEY`.
 - Database migrations ship from the `db` repo, not here.
 - controller must list the bot's OAuth client id in `instances.jitTrustedRateKeyClients`, so share password attempts are rate limited per Discord user instead of per Cloudflare IP.

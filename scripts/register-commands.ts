@@ -1,4 +1,4 @@
-// Usage: node --run commands:register (reads DISCORD_APPLICATION_ID and DISCORD_BOT_TOKEN from .dev.vars)
+// Usage: node --run commands:register (reads DISCORD_APPLICATION_ID and DISCORD_BOT_TOKEN from .dev.vars locally, or the environment in CI)
 // Set DISCORD_DEV_GUILD_ID to register to one server instead, which updates instantly while developing
 import { commands } from '../src/commands.ts';
 
