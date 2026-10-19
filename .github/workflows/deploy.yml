@@ -1,0 +1,37 @@
+name: Deploy
+on:
+  # every push to main deploys production
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: Deploy
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Add NPM Authentication
+        run: (echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" && cat ./.npmrc) > ./.npmrc2 && mv ./.npmrc2 ./.npmrc
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm ci
+      - run: node --run test
+      # Worker secrets are managed with `wrangler secret put`, not from CI
+      - run: npx wrangler deploy --env production

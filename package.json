@@ -1,0 +1,60 @@
+{
+	"name": "discord-bot",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Nodecraft's Discord app, powered by Cloudflare Workers",
+	"homepage": "https://github.com/nodecraft/discord-bot#readme",
+	"bugs": {
+		"url": "https://github.com/nodecraft/discord-bot/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/nodecraft/discord-bot.git"
+	},
+	"license": "UNLICENSED",
+	"author": "Nodecraft Inc.",
+	"type": "module",
+	"scripts": {
+		"check-types": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
+		"commands:register": "node --env-file=.dev.vars scripts/register-commands.ts",
+		"db:local": "docker compose up -d --wait && drizzle-kit push --config drizzle.local.config.ts --force",
+		"db:local:stop": "docker compose down",
+		"deploy:prod": "wrangler deploy --env production",
+		"dev": "wrangler dev --env-file .dev.vars",
+		"lint": "eslint .",
+		"lint:fix": "eslint . --fix",
+		"test": "vitest run",
+		"test:dev": "vitest watch"
+	},
+	"engines": {
+		"node": ">=24",
+		"npm": ">=11"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-plugin": "1.4.0",
+		"@cloudflare/workers-types": "5.20261012.1",
+		"@nodecraft/eslint-config": "52.2.0",
+		"@stylistic/eslint-plugin": "5.10.0",
+		"@types/node": "24.19.2",
+		"@vitest/eslint-plugin": "1.6.27",
+		"drizzle-kit": "0.31.10",
+		"eslint": "10.12.0",
+		"eslint-plugin-import-newlines": "2.0.0",
+		"eslint-plugin-import-x": "4.17.1",
+		"eslint-plugin-n": "18.4.1",
+		"eslint-plugin-unicorn": "76.0.0",
+		"typescript": "6.0.3",
+		"typescript-eslint": "8.71.2",
+		"vitest": "5.0.3",
+		"wrangler": "4.149.0"
+	},
+	"dependencies": {
+		"@nodecraft/db": "8.6.0",
+		"@nodecraft/workers-helpers": "1.7.0",
+		"cloudflare-drizzle-tracing": "1.2.0",
+		"discord-api-types": "0.38.56",
+		"drizzle-orm": "0.45.4",
+		"hono": "4.13.13",
+		"postgres": "3.4.9"
+	}
+}

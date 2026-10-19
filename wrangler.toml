@@ -1,0 +1,92 @@
+name = "discord-bot-dev"
+account_id = "41b5b64401b71d9b659efded061166c7"
+workers_dev = true
+send_metrics = false
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+# work here is I/O-bound; a ceiling stops a bug from burning CPU on every request or alarm
+limits = { cpu_ms = 1000 }
+main = "./src/index.ts"
+
+# shared by every environment; controller tokens are keyed by OAuth client id
+kv_namespaces = [
+	{ binding = "DISCORD_BOT_SETTINGS", id = "9a80e276f6be409692736367d44c0738", preview_id = "9a80e276f6be409692736367d44c0738" },
+]
+
+# local dev and tests talk to Postgres directly; point this at your local nodepanel database
+hyperdrive = [
+	{ binding = "HYPERDRIVE", id = "f77a85ca2d4a4200aa403723d8420452", localConnectionString = "postgres://postgres:postgres@localhost:5432/nodepanel" },
+]
+
+# Secrets (wrangler secret put, or .dev.vars locally):
+# DISCORD_APPLICATION_ID, DISCORD_PUBLIC_KEY, DISCORD_BOT_TOKEN,
+# NODECRAFT_CLIENT_ID, NODECRAFT_CLIENT_SECRET, CARD_ENCRYPTION_KEY
+[vars]
+DISCORD_INVITE_URL = "https://discord.gg/nodecraft"
+LITE_BACKGROUND_UPDATES = "on"
+NODECRAFT_API_URL = "https://api.nodecraft.com"
+NODECRAFT_OAUTH_SCOPE = "instance"
+
+[[durable_objects.bindings]]
+name = "WAKE_WATCHER"
+class_name = "WakeWatcher"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WakeWatcher"]
+
+# every command and click, so one user or Discord server can't drive up Worker, Durable Object and controller load
+[[ratelimits]]
+name = "USER_RATE_LIMIT"
+namespace_id = "4101"
+simple = { limit = 10, period = 60 }
+
+[[ratelimits]]
+name = "GUILD_RATE_LIMIT"
+namespace_id = "4102"
+simple = { limit = 30, period = 60 }
+
+[observability]
+enabled = true
+traces = { enabled = true }
+
+[env.production]
+name = "discord-bot"
+workers_dev = false
+logpush = true
+routes = [
+	{ pattern = "discord.nodecraft.com", custom_domain = true }
+]
+
+[env.production.vars]
+DISCORD_INVITE_URL = "https://discord.gg/nodecraft"
+LITE_BACKGROUND_UPDATES = "on"
+NODECRAFT_API_URL = "https://api.nodecraft.com"
+NODECRAFT_OAUTH_SCOPE = "instance"
+
+[[env.production.kv_namespaces]]
+binding = "DISCORD_BOT_SETTINGS"
+id = "9a80e276f6be409692736367d44c0738"
+
+[[env.production.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "f77a85ca2d4a4200aa403723d8420452"
+
+[[env.production.durable_objects.bindings]]
+name = "WAKE_WATCHER"
+class_name = "WakeWatcher"
+
+[[env.production.ratelimits]]
+name = "USER_RATE_LIMIT"
+namespace_id = "4121"
+simple = { limit = 10, period = 60 }
+
+[[env.production.ratelimits]]
+name = "GUILD_RATE_LIMIT"
+namespace_id = "4122"
+simple = { limit = 30, period = 60 }
+
+[env.production.observability]
+enabled = true
+head_sampling_rate = 1
+traces = { enabled = true }
