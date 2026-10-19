@@ -16,7 +16,7 @@
 	"type": "module",
 	"scripts": {
 		"check-types": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
-		"commands:register": "node --env-file=.dev.vars scripts/register-commands.ts",
+		"commands:register": "node --env-file-if-exists=.dev.vars scripts/register-commands.ts",
 		"db:local": "docker compose up -d --wait && drizzle-kit push --config drizzle.local.config.ts --force",
 		"db:local:stop": "docker compose down",
 		"deploy:prod": "wrangler deploy --env production",
