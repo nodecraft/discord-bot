@@ -12,6 +12,9 @@ const app = new Hono<{ Bindings: Env; }>();
 
 app.get('/health', context => context.text('ok'));
 
+// a stable, branded install link for nodepanel and docs; Discord's own page then offers "My Apps" or "Server"
+app.get('/install', context => context.redirect(`https://discord.com/oauth2/authorize?client_id=${context.env.DISCORD_APPLICATION_ID}`, 302));
+
 app.post('/interactions', async (context) => {
 	// the signature covers the raw bytes, so read text before parsing
 	const body = await context.req.text();

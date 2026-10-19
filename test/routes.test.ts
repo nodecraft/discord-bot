@@ -26,4 +26,11 @@ describe('hostname routes', () => {
 		expect(response.status).toBe(200);
 		expect(await response.text()).toBe('ok');
 	});
+
+	it('sends /install to Discord\'s install page for this app, so nodepanel never needs the app id', async () => {
+		const response = await get('/install');
+		expect(response.status).toBe(302);
+		expect(response.headers.get('location')).toBe('https://discord.com/oauth2/authorize?client_id=100000000000000000');
+		await response.text();
+	});
 });

@@ -45,6 +45,17 @@ describe('interactions endpoint', () => {
 		expect(body.data.content).toContain('isn\'t a Lite share link');
 	});
 
+	it('explains how to share a server, privately, on /nodecraft help', async () => {
+		const response = await postInteraction({
+			...shareCommand([]),
+			data: { id: '2', name: 'nodecraft', type: 1, options: [{ type: 1, name: 'help' }] },
+		});
+		const body = await response.json<{ type: number; data: { flags: number; content: string; }; }>();
+		expect(body.type).toBe(4);
+		expect(body.data.flags).toBe(64);
+		expect(body.data.content).toContain('/nodecraft share link:');
+	});
+
 	it('refuses a panel when the app is only user-installed', async () => {
 		const response = await postInteraction(shareCommand(
 			[

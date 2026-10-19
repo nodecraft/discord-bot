@@ -1,6 +1,7 @@
 // Command definitions only, with no Worker runtime imports, so scripts/register-commands.ts can run under Node
 import { ApplicationCommandType, ApplicationIntegrationType, InteractionContextType } from 'discord-api-types/v10';
 
+import { helpSubcommands } from './features/help/commands.ts';
 import { liteMessageCommands, liteSubcommands } from './features/lite/commands.ts';
 
 import type { RESTPutAPIApplicationCommandsJSONBody } from 'discord-api-types/v10';
@@ -18,7 +19,7 @@ export const commands: RESTPutAPIApplicationCommandsJSONBody = [
 		type: ApplicationCommandType.ChatInput,
 		integration_types: integrationTypes,
 		contexts,
-		options: [...liteSubcommands],
+		options: [...liteSubcommands, ...helpSubcommands],
 	},
 	...liteMessageCommands.map((name) => {
 		return {
