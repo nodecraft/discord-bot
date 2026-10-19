@@ -1,0 +1,15 @@
+DISCORD_APPLICATION_ID=
+DISCORD_PUBLIC_KEY=
+DISCORD_BOT_TOKEN=
+# optional: register commands to one server while developing, which applies instantly
+DISCORD_DEV_GUILD_ID=
+
+NODECRAFT_CLIENT_ID=
+NODECRAFT_CLIENT_SECRET=
+
+# 32 random bytes, base64: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
+CARD_ENCRYPTION_KEY=
+
+# Postgres for local dev; this matches `node --run db:local`, or point it at a Neon branch
+# (node --run dev passes this file to wrangler with --env-file, which is how wrangler sees this variable)
+CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgres://postgres:postgres@localhost:5432/nodepanel

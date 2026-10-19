@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.dev.vars
+.wrangler
+*.DS_Store
+
+# Claude
+.claude/settings.local.json
