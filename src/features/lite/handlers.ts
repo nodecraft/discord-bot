@@ -7,16 +7,22 @@ import {
 } from 'discord-api-types/v10';
 
 import { getSharedServer } from './api.ts';
-import { FEATURE, renderCard, renderNotice } from './cards.ts';
+import {
+	FEATURE,
+	findCardId,
+	renderCard,
+	renderNotice,
+} from './cards.ts';
 import { SHARE_OPTIONS } from './commands.ts';
 import { UNUSABLE_LINK_CODES, errorMessage } from './errors.ts';
 import { gameArt } from './games.ts';
-import { findShareId, parseShareInput } from './share-link.ts';
+import { findShareIdInMessage, parseShareInput } from './share-link.ts';
 import {
 	cardPassword,
 	countOtherPanels,
 	createCard,
 	getCard,
+	retirePanels,
 	setMessageId,
 	switchToAsk,
 	takeExistingPanel,
@@ -53,6 +59,7 @@ import type {
 
 const PASSWORD_INPUT = 'password';
 const CARD_EXPIRED = 'This card is no longer available. Post the share link again with /nodecraft share.';
+const NO_LINK_FOUND = 'I couldn\'t find a Lite share link or card in that message.';
 
 function subcommandOptions(interaction: APIChatInputApplicationCommandInteraction): Map<string, APIApplicationCommandInteractionDataBasicOption> {
 	const [subcommand] = interaction.data.options ?? [];
@@ -180,14 +187,12 @@ async function postShareCard(
 	}
 
 	const channelId = interaction.channel.id;
-	let previousPanel: LiteCard | null = null;
 	if (isPanel) {
 		const limitMessage = await panelLimitMessage(ctx.env, interaction.guild_id ?? '', shareId, channelId);
 		if (limitMessage) {
 			await editOriginalResponse(ctx.env, interaction.token, { content: limitMessage });
 			return;
 		}
-		previousPanel = await withDB(ctx.env, db => takeExistingPanel(db, channelId));
 	}
 	const card = await withDB(ctx.env, db => createCard(db, ctx.env, {
 		shareId,
@@ -209,14 +214,17 @@ async function postShareCard(
 	try {
 		const posted = await createChannelMessage(ctx.env, channelId, message);
 		messageId = posted.id;
-		await withDB(ctx.env, db => setMessageId(db, card.id, messageId));
 	} catch (err) {
+		// the panel never made it into the channel, so it mustn't count toward the caps or replace the existing one
+		await withDB(ctx.env, db => retirePanels(db, [card.id]));
 		if (err instanceof DiscordApiError && err.status === 403) {
 			await editOriginalResponse(ctx.env, interaction.token, { content: 'I can\'t post in this channel. Check that Nodecraft can view and send messages here.' });
 			return;
 		}
 		throw err;
 	}
+	await withDB(ctx.env, db => setMessageId(db, card.id, messageId));
+	const previousPanel = await withDB(ctx.env, db => takeExistingPanel(db, channelId, card.id));
 	await watcher(ctx.env, shareId).watchPanel({ cardId: card.id, message: { channelId, messageId }, server, game });
 	if (previousPanel) {
 		await watcher(ctx.env, previousPanel.share_id).unwatchPanel(previousPanel.id).catch(() => {});
@@ -244,11 +252,59 @@ export const shareCommand: SubcommandHandler = (interaction, ctx) => {
 	return deferredMessage(isPanel);
 };
 
+function passwordModal(cardId: string): APIInteractionResponse {
+	return {
+		type: InteractionResponseType.Modal,
+		data: {
+			custom_id: customId(FEATURE, 'password', cardId),
+			title: 'Share password',
+			components: [{
+				type: ComponentType.Label,
+				label: 'Share password',
+				description: 'Ask the server owner if you don\'t know it.',
+				component: {
+					type: ComponentType.TextInput,
+					custom_id: PASSWORD_INPUT,
+					style: TextInputStyle.Short,
+					required: true,
+					max_length: 128,
+				},
+			}],
+		},
+	};
+}
+
+// shared by the Wake button and right-clicking a card, which differ only in whether the reply replaces the card or follows it
+async function wakeCard(interaction: APIInteraction & { token: string; }, ctx: InteractionContext, cardId: string, deferred: APIInteractionResponse): Promise<APIInteractionResponse> {
+	const card = await withDB(ctx.env, db => getCard(db, cardId));
+	if (!card) {
+		return ephemeralMessage(CARD_EXPIRED);
+	}
+	if (card.password_mode === 'ask') {
+		return passwordModal(card.id);
+	}
+	runInBackground(ctx, interaction.token, async () => {
+		const password = await cardPassword(ctx.env, card);
+		await runWake(ctx, card, interaction.token, interactionUserId(interaction), password);
+	});
+	return deferred;
+}
+
 export const wakeMessageCommand: MessageCommandHandler = (interaction, ctx) => {
 	const target = interaction.data.resolved.messages[interaction.data.target_id];
-	const shareId = findShareId(target?.content ?? '');
+	if (!target) {
+		return ephemeralMessage(NO_LINK_FOUND);
+	}
+	// only our own messages, so another bot can't borrow a card id (and its saved password) by copying its buttons
+	if (target.author.id === ctx.env.DISCORD_APPLICATION_ID) {
+		const cardId = findCardId(target.components ?? []);
+		if (cardId) {
+			return wakeCard(interaction, ctx, cardId, deferredMessage(false));
+		}
+	}
+	const shareId = findShareIdInMessage(target);
 	if (!shareId) {
-		return ephemeralMessage('I couldn\'t find a Lite share link in that message.');
+		return ephemeralMessage(NO_LINK_FOUND);
 	}
 	runInBackground(ctx, interaction.token, async () => {
 		const client = await controller(ctx.env, ctx.waitUntil);
@@ -281,28 +337,6 @@ export const wakeMessageCommand: MessageCommandHandler = (interaction, ctx) => {
 	return deferredMessage(false);
 };
 
-function passwordModal(cardId: string): APIInteractionResponse {
-	return {
-		type: InteractionResponseType.Modal,
-		data: {
-			custom_id: customId(FEATURE, 'password', cardId),
-			title: 'Share password',
-			components: [{
-				type: ComponentType.Label,
-				label: 'Share password',
-				description: 'Ask the server owner if you don\'t know it.',
-				component: {
-					type: ComponentType.TextInput,
-					custom_id: PASSWORD_INPUT,
-					style: TextInputStyle.Short,
-					required: true,
-					max_length: 128,
-				},
-			}],
-		},
-	};
-}
-
 function modalValue(data: APIModalSubmission, inputId: string): string | undefined {
 	// modals arrive with inputs wrapped in Labels, or in action rows from older clients
 	const inputs = data.components.flatMap((row) => {
@@ -321,20 +355,7 @@ function modalValue(data: APIModalSubmission, inputId: string): string | undefin
 	return undefined;
 }
 
-export const wakeButton: ComponentHandler = async (interaction, ctx, cardId) => {
-	const card = await withDB(ctx.env, db => getCard(db, cardId));
-	if (!card) {
-		return ephemeralMessage(CARD_EXPIRED);
-	}
-	if (card.password_mode === 'ask') {
-		return passwordModal(card.id);
-	}
-	runInBackground(ctx, interaction.token, async () => {
-		const password = await cardPassword(ctx.env, card);
-		await runWake(ctx, card, interaction.token, interactionUserId(interaction), password);
-	});
-	return deferredUpdate();
-};
+export const wakeButton: ComponentHandler = (interaction, ctx, cardId) => wakeCard(interaction, ctx, cardId, deferredUpdate());
 
 export const passwordSubmit: ModalHandler = async (interaction, ctx, cardId) => {
 	const card = await withDB(ctx.env, db => getCard(db, cardId));
@@ -343,7 +364,11 @@ export const passwordSubmit: ModalHandler = async (interaction, ctx, cardId) => 
 	}
 	const password = modalValue(interaction.data, PASSWORD_INPUT);
 	runInBackground(ctx, interaction.token, () => runWake(ctx, card, interaction.token, interactionUserId(interaction), password));
-	return deferredUpdate();
+	// a modal opened from a right-click has no message to update, so it gets a new reply instead
+	if (interaction.message) {
+		return deferredUpdate();
+	}
+	return deferredMessage(false);
 };
 
 export const refreshButton: ComponentHandler = async (interaction, ctx, cardId) => {

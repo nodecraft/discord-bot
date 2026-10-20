@@ -6,7 +6,7 @@ import {
 } from 'discord-api-types/v10';
 
 import { describeServer } from './status.ts';
-import { customId } from '../../discord/types.ts';
+import { customId, parseCustomId } from '../../discord/types.ts';
 
 import type { SharedServer } from './api.ts';
 import type { GameArt } from './games.ts';
@@ -183,6 +183,32 @@ export function renderCard(server: SharedServer, options: CardOptions): CardMess
 	children.push(footer(options.updatedAt ?? Date.now(), options.layout));
 
 	return container(display.color, children);
+}
+
+interface ComponentNode {
+	type: number;
+	custom_id?: string;
+	components?: readonly ComponentNode[];
+	accessory?: ComponentNode;
+}
+
+// cards have no text content, so a right-clicked card is recognised by the card id in its own buttons
+export function findCardId(components: readonly ComponentNode[]): string | null {
+	for (const component of components) {
+		const parsed = component.custom_id ? parseCustomId(component.custom_id) : null;
+		if (parsed?.feature === FEATURE && parsed.arg) {
+			return parsed.arg;
+		}
+		const nested = [...(component.components ?? [])];
+		if (component.accessory) {
+			nested.push(component.accessory);
+		}
+		const found = findCardId(nested);
+		if (found) {
+			return found;
+		}
+	}
+	return null;
 }
 
 // For cards that can't show a server, such as a locked or regenerated share link

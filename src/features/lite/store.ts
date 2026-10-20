@@ -74,11 +74,15 @@ export async function setMessageId(db: Database, id: string, messageId: string):
 	await db.update(discordBotLiteCards).set({ message_id: messageId }).where(eq(discordBotLiteCards.id, id));
 }
 
-// returns the panel being replaced, so its message can be cleaned up
-export async function takeExistingPanel(db: Database, channelId: string): Promise<LiteCard | null> {
+// returns the panel being replaced by newPanelId, so its message can be cleaned up
+export async function takeExistingPanel(db: Database, channelId: string, newPanelId: string): Promise<LiteCard | null> {
 	const [existing] = await db.update(discordBotLiteCards)
 		.set({ is_panel: false })
-		.where(and(eq(discordBotLiteCards.channel_id, channelId), eq(discordBotLiteCards.is_panel, true)))
+		.where(and(
+			eq(discordBotLiteCards.channel_id, channelId),
+			eq(discordBotLiteCards.is_panel, true),
+			ne(discordBotLiteCards.id, newPanelId),
+		))
 		.returning();
 	return existing ?? null;
 }

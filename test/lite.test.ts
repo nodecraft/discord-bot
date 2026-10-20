@@ -1,8 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
-import { renderCard } from '../src/features/lite/cards.ts';
-import { findShareId, parseShareInput } from '../src/features/lite/share-link.ts';
+import { findCardId, renderCard, renderNotice } from '../src/features/lite/cards.ts';
+import { findShareId, findShareIdInMessage, parseShareInput } from '../src/features/lite/share-link.ts';
 import { describeServer, nextPanelCheck } from '../src/features/lite/status.ts';
 import { decryptSecret, encryptSecret } from '../src/lib/crypto.ts';
 
@@ -34,6 +34,23 @@ describe('share links', () => {
 
 	it('ignores look-alike links on other domains', () => {
 		expect(findShareId(`https://nodecraft.com.evil.example/shared/${SHARE_ID}`)).toBeNull();
+	});
+
+	it('finds a share link that only appears in an embed, like a link preview or another bot\'s post', () => {
+		const embeds = [{ title: 'Join us', fields: [{ name: 'Server', value: `https://app.nodecraft.com/shared/${SHARE_ID}` }] }];
+		expect(findShareIdInMessage({ content: '', embeds })).toBe(SHARE_ID);
+	});
+});
+
+describe('findCardId', () => {
+	it('finds the card behind a right-clicked card, whichever buttons it is showing', () => {
+		expect(findCardId(renderCard(server({ jit_status: 'stored', status: 'offline' }), { cardId: 'card-1' }).components)).toBe('card-1');
+		expect(findCardId(renderNotice('Link was regenerated', 'card-2').components)).toBe('card-2');
+	});
+
+	it('ignores messages with no Lite buttons', () => {
+		expect(findCardId(renderNotice('Link was regenerated', null).components)).toBeNull();
+		expect(findCardId([{ type: 1, components: [{ type: 2, custom_id: 'other:wake:card-1' }] }])).toBeNull();
 	});
 });
 

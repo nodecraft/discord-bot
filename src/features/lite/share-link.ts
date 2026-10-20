@@ -1,3 +1,5 @@
+import type { APIMessage } from 'discord-api-types/v10';
+
 const UUID = String.raw`[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}`;
 const SHARE_LINK = new RegExp(String.raw`https?://(?:[\w-]+\.)*nodecraft\.com/shared/(${UUID})`, 'i');
 const BARE_SHARE_ID = new RegExp(String.raw`^\s*(${UUID})\s*$`, 'i');
@@ -9,6 +11,18 @@ export function findShareId(text: string): string | null {
 		return null;
 	}
 	return match[1].toLowerCase();
+}
+
+// Link previews and messages from other bots often carry the link in an embed instead of the text
+export function findShareIdInMessage(message: Pick<APIMessage, 'content' | 'embeds'>): string | null {
+	const texts = [message.content];
+	for (const embed of message.embeds) {
+		texts.push(embed.url ?? '', embed.description ?? '');
+		for (const field of embed.fields ?? []) {
+			texts.push(field.value);
+		}
+	}
+	return findShareId(texts.join('\n'));
 }
 
 // Command input also accepts a bare share ID, since people copy it from nodepanel's settings page
