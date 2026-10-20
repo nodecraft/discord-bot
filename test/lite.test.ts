@@ -1,7 +1,9 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
+import { parseSharedServer } from '../src/features/lite/api.ts';
 import { findCardId, renderCard, renderNotice } from '../src/features/lite/cards.ts';
+import { errorMessage } from '../src/features/lite/errors.ts';
 import { findShareId, findShareIdInMessage, parseShareInput } from '../src/features/lite/share-link.ts';
 import { describeServer, nextPanelCheck } from '../src/features/lite/status.ts';
 import { decryptSecret, encryptSecret } from '../src/lib/crypto.ts';
@@ -13,6 +15,7 @@ const SHARE_ID = 'd1281851-20e3-4d94-aef3-26b68106996a';
 function server(overrides: Partial<SharedServer>): SharedServer {
 	return {
 		name: 'My Survival World',
+		share_type: 'lite',
 		jit_status: 'live',
 		jit_available: true,
 		network: { address: '203.0.113.10', hostname: 'mysurvival', domain: 'nodecraft.gg' },
@@ -21,6 +24,54 @@ function server(overrides: Partial<SharedServer>): SharedServer {
 		...overrides,
 	};
 }
+
+// controller sends Pro servers without any jit_status or jit_expires_date
+function proServer(overrides: Partial<SharedServer>): SharedServer {
+	const { jit_status: _jitStatus, ...base } = server({});
+	return { ...base, share_type: 'pro', ...overrides };
+}
+
+interface ButtonNode {
+	label?: string;
+	custom_id?: string;
+	disabled?: boolean;
+	components?: ButtonNode[];
+}
+
+function buttons(card: { components: unknown[]; }): ButtonNode[] {
+	const found: ButtonNode[] = [];
+	const visit = (nodes: ButtonNode[]) => {
+		for (const node of nodes) {
+			if (node.label) {
+				found.push(node);
+			}
+			visit(node.components ?? []);
+		}
+	};
+	visit(card.components as ButtonNode[]);
+	return found;
+}
+
+describe('parseSharedServer', () => {
+	it('prefers the share_* fields over the legacy jit_share_* ones', () => {
+		const parsed = parseSharedServer({
+			...proServer({}),
+			share_password_enabled: false,
+			share_discord_url: 'https://discord.gg/new',
+			jit_share_password_enabled: true,
+			jit_share_discord_url: 'https://discord.gg/old',
+		});
+		expect(parsed).toMatchObject({ share_type: 'pro', share_password_enabled: false, share_discord_url: 'https://discord.gg/new' });
+		expect(parsed).not.toHaveProperty('jit_share_discord_url');
+	});
+
+	it('reads the legacy fields from a controller that predates Pro share links, and treats it as Lite', () => {
+		const { share_type: _shareType, ...legacy } = server({ jit_status: 'stored', status: 'offline' });
+		const parsed = parseSharedServer({ ...legacy, jit_share_password_enabled: true, jit_share_discord_url: 'https://discord.gg/old' });
+		expect(parsed).toMatchObject({ share_type: 'lite', share_password_enabled: true, share_discord_url: 'https://discord.gg/old' });
+		expect(describeServer(parsed)).toMatchObject({ state: 'hibernating', action: 'wake' });
+	});
+});
 
 describe('share links', () => {
 	it('finds a share link inside a chat message', () => {
@@ -73,6 +124,25 @@ describe('describeServer', () => {
 	it('has nothing to press while saving to hibernate', () => {
 		expect(describeServer(server({ jit_status: 'storing', status: 'offline' }))).toMatchObject({ state: 'saving', action: null });
 	});
+
+	it('shows a running Pro server as online with its join address', () => {
+		expect(describeServer(proServer({ status: 'online' }))).toMatchObject({ state: 'online', action: null, joinAddress: 'mysurvival.nodecraft.gg:25565' });
+	});
+
+	it('offers Start for a deployed Pro server that is offline, never calling it hibernating', () => {
+		expect(describeServer(proServer({ status: 'offline' }))).toMatchObject({ state: 'offline', action: 'start' });
+		expect(describeServer(proServer({ status: undefined }))).toMatchObject({ state: 'offline', action: 'start' });
+	});
+
+	it('ignores a stray jit_status on a Pro server', () => {
+		expect(describeServer(proServer({ jit_status: 'stored', status: 'offline' }))).toMatchObject({ state: 'offline', action: 'start' });
+	});
+
+	it('tells people an archived Pro server needs its owner to deploy it', () => {
+		const view = describeServer(proServer({ jit_available: false, status: 'offline' }));
+		expect(view).toMatchObject({ state: 'archived', action: null });
+		expect(view.note).toContain('deploy');
+	});
 });
 
 describe('renderCard', () => {
@@ -114,6 +184,45 @@ describe('renderCard', () => {
 		expect(JSON.stringify(renderCard(server({ players: 3 }), { cardId: 'card-1' }))).toContain('3 players');
 		expect(JSON.stringify(renderCard(server({ players: 3, jit_status: 'stored', status: 'offline' }), { cardId: 'card-1' }))).not.toContain('players');
 	});
+
+	it('labels the action Start for both Lite and Pro, on the button id older cards already use', () => {
+		for (const offline of [server({ jit_status: 'stored', status: 'offline' }), proServer({ status: 'offline' })]) {
+			const start = buttons(renderCard(offline, { cardId: 'card-1' })).find(button => button.custom_id === 'lite:wake:card-1');
+			expect(start).toMatchObject({ label: 'Start', disabled: false });
+		}
+		expect(JSON.stringify(renderCard(server({ jit_status: 'stored', status: 'offline' }), { cardId: 'card-1' }))).not.toContain('Wake');
+	});
+
+	it('greys out Start on an archived Pro server and says why', () => {
+		const card = renderCard(proServer({ jit_available: false, status: 'offline' }), { cardId: 'card-1' });
+		const start = buttons(card).find(button => button.custom_id === 'lite:wake:card-1');
+		expect(start?.disabled).toBe(true);
+		expect(JSON.stringify(card)).toContain('Archived');
+		expect(JSON.stringify(card)).not.toContain('Hibernat');
+	});
+
+	it('draws a Pro start without the hibernate and wake steps', () => {
+		const card = JSON.stringify(renderCard(proServer({ status: 'offline' }), { cardId: 'card-1', progress: { state: 'starting', since: Date.now() } }));
+		expect(card).toContain('Nodecraft Pro');
+		expect(card).toContain('Starting');
+		expect(card).not.toContain('💤');
+	});
+
+	it('links the owner\'s Discord from the share settings', () => {
+		const card = renderCard(proServer({ share_discord_url: 'https://discord.gg/owner' }), { cardId: 'card-1' });
+		expect(buttons(card).find(button => button.label === 'Contact owner')).toMatchObject({ url: 'https://discord.gg/owner' });
+	});
+});
+
+describe('errorMessage', () => {
+	it('explains that an archived server has to be deployed by its owner', () => {
+		// shaped like the error nc_fetch_oauth throws for a failed controller response
+		class ControllerError extends Error {
+			override name = 'nc_fetchError';
+			code = 'instances.share_unavailable';
+		}
+		expect(errorMessage(new ControllerError('archived'))).toContain('owner needs to deploy it again');
+	});
 });
 
 describe('secret encryption', () => {
@@ -150,5 +259,13 @@ describe('nextPanelCheck', () => {
 
 	it('checks in every 10 minutes while players keep a server live', () => {
 		expect(nextPanelCheck(server({ jit_status: 'live', jit_expires_date: null }), now)).toBe(now + 600000);
+	});
+
+	it('keeps checking a Pro server, which has no expiry and can be started from Nodecraft at any time', () => {
+		expect(nextPanelCheck(proServer({ status: 'offline' }), now)).toBe(now + 600000);
+	});
+
+	it('checks an archived Pro server hourly, since only its owner can redeploy it', () => {
+		expect(nextPanelCheck(proServer({ jit_available: false, status: 'offline' }), now)).toBe(now + 3_600_000);
 	});
 });

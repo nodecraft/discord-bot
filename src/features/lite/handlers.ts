@@ -17,6 +17,7 @@ import { SHARE_OPTIONS } from './commands.ts';
 import { UNUSABLE_LINK_CODES, errorMessage } from './errors.ts';
 import { gameArt } from './games.ts';
 import { findShareIdInMessage, parseShareInput } from './share-link.ts';
+import { describeServer } from './status.ts';
 import {
 	cardPassword,
 	countOtherPanels,
@@ -59,7 +60,7 @@ import type {
 
 const PASSWORD_INPUT = 'password';
 const CARD_EXPIRED = 'This card is no longer available. Post the share link again with /nodecraft share.';
-const NO_LINK_FOUND = 'I couldn\'t find a Lite share link or card in that message.';
+const NO_LINK_FOUND = 'I couldn\'t find a share link or card in that message.';
 
 function subcommandOptions(interaction: APIChatInputApplicationCommandInteraction): Map<string, APIApplicationCommandInteractionDataBasicOption> {
 	const [subcommand] = interaction.data.options ?? [];
@@ -89,7 +90,7 @@ function isInstalledInGuild(interaction: APIInteraction): boolean {
 }
 
 function passwordModeFor(server: SharedServer, password: string | undefined): PasswordMode {
-	if (!server.jit_share_password_enabled) {
+	if (!server.share_password_enabled) {
 		return 'none';
 	}
 	if (password) {
@@ -116,7 +117,7 @@ const MAX_PANELS_PER_SHARE = 10;
 async function panelLimitMessage(env: Env, guildId: string, shareId: string, channelId: string): Promise<string | null> {
 	const panels = await withDB(env, db => countOtherPanels(db, { guildId, shareId, channelId }));
 	if (panels.guild >= MAX_PANELS_PER_GUILD) {
-		return `This Discord server already has ${MAX_PANELS_PER_GUILD} Lite panels. Delete one, or post this one in a channel that already has a panel to replace it.`;
+		return `This Discord server already has ${MAX_PANELS_PER_GUILD} server panels. Delete one, or post this one in a channel that already has a panel to replace it.`;
 	}
 	if (panels.share >= MAX_PANELS_PER_SHARE) {
 		return `This server is already pinned as a panel in ${MAX_PANELS_PER_SHARE} channels. Post a regular card instead by leaving out \`panel\`.`;
@@ -154,7 +155,7 @@ async function runWake(ctx: InteractionContext, card: LiteCard, token: string, u
 	if (result.passwordError) {
 		if (card.password_mode === 'none') {
 			await withDB(ctx.env, db => switchToAsk(db, card.id));
-			note = 'This server now needs the share password. Press Wake to enter it.';
+			note = 'This server now needs the share password. Press Start to enter it.';
 		} else if (card.password_mode === 'remember') {
 			// controller reports rate limits as a wrong password, so keep the saved one rather than discard it
 			note = 'The saved password didn\'t work. If this keeps happening, post the share link again.';
@@ -239,7 +240,7 @@ export const shareCommand: SubcommandHandler = (interaction, ctx) => {
 	const options = subcommandOptions(interaction);
 	const shareId = parseShareInput(stringOption(options, SHARE_OPTIONS.link) ?? '');
 	if (!shareId) {
-		return ephemeralMessage('That isn\'t a Lite share link. It looks like https://app.nodecraft.com/shared/...');
+		return ephemeralMessage('That isn\'t a Nodecraft share link. It looks like https://app.nodecraft.com/shared/...');
 	}
 	const panelOption = options.get(SHARE_OPTIONS.panel);
 	const isPanel = panelOption?.type === ApplicationCommandOptionType.Boolean && panelOption.value;
@@ -274,7 +275,7 @@ function passwordModal(cardId: string): APIInteractionResponse {
 	};
 }
 
-// shared by the Wake button and right-clicking a card, which differ only in whether the reply replaces the card or follows it
+// shared by the Start button and right-clicking a card, which differ only in whether the reply replaces the card or follows it
 async function wakeCard(interaction: APIInteraction & { token: string; }, ctx: InteractionContext, cardId: string, deferred: APIInteractionResponse): Promise<APIInteractionResponse> {
 	const card = await withDB(ctx.env, db => getCard(db, cardId));
 	if (!card) {
@@ -325,10 +326,15 @@ export const wakeMessageCommand: MessageCommandHandler = (interaction, ctx) => {
 			passwordMode: passwordModeFor(server, undefined),
 		}));
 		if (card.password_mode === 'ask') {
+			let note: string | undefined;
+			// an archived or running server has no working Start button to point at
+			if (describeServer(server).action) {
+				note = 'Press Start and enter the share password.';
+			}
 			await editOriginalResponse(ctx.env, interaction.token, renderCard(server, {
 				cardId: card.id,
 				game: await gameArt(ctx.env, client, server.module),
-				note: 'Press Wake and enter the share password.',
+				note,
 			}));
 			return;
 		}

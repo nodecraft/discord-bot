@@ -1,5 +1,5 @@
 import { FEATURE } from './cards.ts';
-import { SHARE_SUBCOMMAND, WAKE_MESSAGE_COMMAND } from './commands.ts';
+import { LEGACY_WAKE_MESSAGE_COMMAND, SHARE_SUBCOMMAND, START_MESSAGE_COMMAND } from './commands.ts';
 import {
 	passwordSubmit,
 	refreshButton,
@@ -16,7 +16,8 @@ export const lite: Feature = {
 		[SHARE_SUBCOMMAND]: shareCommand,
 	},
 	messageCommands: {
-		[WAKE_MESSAGE_COMMAND]: wakeMessageCommand,
+		[START_MESSAGE_COMMAND]: wakeMessageCommand,
+		[LEGACY_WAKE_MESSAGE_COMMAND]: wakeMessageCommand,
 	},
 	components: {
 		wake: wakeButton,
