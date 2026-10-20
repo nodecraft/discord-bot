@@ -1,6 +1,7 @@
 import type { SharedServer } from './api.ts';
 
 export type ServerState =
+	| 'archived'
 	| 'hibernating'
 	| 'hibernating_soon'
 	| 'offline'
@@ -38,9 +39,29 @@ function joinAddress(server: SharedServer): string | null {
 	return host;
 }
 
+// Pro servers never hibernate, so only the heartbeat status matters once they're deployed
+function describeProServer(server: SharedServer, address: string | null): ServerView {
+	if (!server.jit_available) {
+		return { state: 'archived', action: null, joinAddress: null, note: 'The owner needs to deploy it again in Nodecraft before it can start.' };
+	}
+	if (server.status === 'online') {
+		return { state: 'online', action: null, joinAddress: address, note: null };
+	}
+	if (server.status === 'started') {
+		return { state: 'starting', action: null, joinAddress: address, note: null };
+	}
+	if (server.status === 'stopping') {
+		return { state: 'stopping', action: null, joinAddress: null, note: null };
+	}
+	return { state: 'offline', action: 'start', joinAddress: null, note: null };
+}
+
 // Mirrors nodepanel's Lite labels (assets/entrypoints/shared/shared.ts) so users see the same words everywhere
 export function describeServer(server: SharedServer): ServerView {
 	const address = joinAddress(server);
+	if (server.share_type === 'pro') {
+		return describeProServer(server, address);
+	}
 
 	if (server.jit_status === 'storing') {
 		return { state: 'saving', action: null, joinAddress: null, note: 'Saving to hibernate. Try again in a few minutes.' };
@@ -82,6 +103,8 @@ const EXPIRY_GRACE_MS = 30000;
 // while players keep a server live there's no expiry to aim at, so check in occasionally
 const LIVE_RECHECK_MS = 10 * MINUTE_MS;
 const SAVING_RECHECK_MS = 2 * MINUTE_MS;
+// only the owner can redeploy an archived server, and they do it from Nodecraft rather than a card
+const ARCHIVED_RECHECK_MS = 60 * MINUTE_MS;
 // an expiry already in the past (a locked server the idle scan skips, or a slow scan) would otherwise mean a check every minute forever
 const STALE_EXPIRY_RECHECK_MS = 5 * MINUTE_MS;
 
@@ -93,6 +116,9 @@ export function nextPanelCheck(server: SharedServer, now: number): number | null
 	}
 	if (state === 'saving') {
 		return now + SAVING_RECHECK_MS;
+	}
+	if (state === 'archived') {
+		return now + ARCHIVED_RECHECK_MS;
 	}
 	let expires = NaN;
 	if (server.jit_expires_date) {

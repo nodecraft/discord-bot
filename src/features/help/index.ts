@@ -5,14 +5,14 @@ import type { Feature } from '../../discord/types.ts';
 
 const HELP_TEXT = [
 	'## Nodecraft in Discord',
-	'**Share a Lite server**',
-	'1. Copy your server\'s share link from its Lite settings in Nodecraft.',
-	'2. Run `/nodecraft share link:<your share link>` in any channel. Anyone who can see the card can wake the server.',
+	'**Share a server**',
+	'1. Copy your server\'s share link from its share settings in Nodecraft. Pro servers need sharing turned on first.',
+	'2. Run `/nodecraft share link:<your share link>` in any channel. Anyone who can see the card can start the server.',
 	'- Add `panel:True` to pin a panel that keeps itself up to date. Nodecraft has to be added to this Discord server for panels.',
 	'- Add `password:<your share password>` to save it with the card, so friends don\'t have to type it.',
 	'',
-	'**Wake from a message**',
-	'Right-click a message with a share link, then choose **Apps > Wake Lite server**.',
+	'**Start from a message**',
+	'Right-click a message with a share link, then choose **Apps > Start Nodecraft server**.',
 	'',
 	'Add Nodecraft to your account or a Discord server: https://discord.nodecraft.com/install',
 ].join('\n');

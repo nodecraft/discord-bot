@@ -342,6 +342,11 @@ export class WakeWatcher extends DurableObject<Env> {
 			await this.renderAll(state, (cardId, layout) => this.restingCard(state, cardId, layout, 'The server didn\'t finish waking. Try again, or ask the owner to check Nodecraft.'));
 			await this.finishWake(server);
 			return;
+		} else if (view.state === 'archived') {
+			// only the owner can bring an archived server back, so there's nothing left to wait for
+			await this.renderAll(state, (cardId, layout) => this.restingCard(state, cardId, layout));
+			await this.finishWake(server);
+			return;
 		}
 		if (state.progress === 'waking' && server.jit_status !== 'stored' && server.jit_status !== 'waking') {
 			state.progress = 'starting';
@@ -429,7 +434,7 @@ export class WakeWatcher extends DurableObject<Env> {
 				cardId: request.cardId,
 				layout: layoutFor(target),
 				game,
-				note: 'This server has been woken a lot in the last hour. Try again later, or wake it from Nodecraft.',
+				note: 'This server has been started a lot in the last hour. Try again later, or start it from Nodecraft.',
 			}));
 			return { ok: true };
 		}

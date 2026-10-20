@@ -16,6 +16,7 @@ import type { APIButtonComponent, APIComponentInContainer, APIMessageTopLevelCom
 export const FEATURE = 'lite';
 
 const STATES: Record<ServerState, { emoji: string; label: string; color: number; }> = {
+	archived: { emoji: '📦', label: 'Archived', color: 0x6B_72_80 },
 	hibernating: { emoji: '💤', label: 'Hibernating', color: 0x6B_72_80 },
 	hibernating_soon: { emoji: '🌇', label: 'Preparing to hibernate', color: 0xF5_9E_0B },
 	offline: { emoji: '⚫', label: 'Offline', color: 0x6B_72_80 },
@@ -27,8 +28,9 @@ const STATES: Record<ServerState, { emoji: string; label: string; color: number;
 	waking: { emoji: '🌅', label: 'Waking', color: 0x3B_82_F6 },
 };
 
-// the wake path, drawn like the status track on nodepanel's share page
-const TRACK: ServerState[] = ['hibernating', 'waking', 'starting', 'online'];
+// the start path, drawn like the status track on nodepanel's share page
+const LITE_TRACK: ServerState[] = ['hibernating', 'waking', 'starting', 'online'];
+const PRO_TRACK: ServerState[] = ['offline', 'starting', 'online'];
 
 const JOINABLE_STATES: Set<ServerState> = new Set(['online', 'starting', 'hibernating_soon']);
 const DISCORD_URL = /^https:\/\/discord\.(?:com|gg)\//;
@@ -46,7 +48,7 @@ export interface CardOptions {
 	layout?: 'card' | 'panel';
 	game?: GameArt | null;
 	note?: string | null;
-	// set while a wake is in flight, before controller reports the new state
+	// set while a start is in flight, before controller reports the new state
 	progress?: { state: 'starting' | 'waking'; since: number; };
 	updatedAt?: number;
 }
@@ -68,12 +70,15 @@ function container(color: number, children: APIComponentInContainer[]): CardMess
 	};
 }
 
-function header(title: string, game: GameArt | null | undefined): APIComponentInContainer {
+function header(server: SharedServer, game: GameArt | null | undefined): APIComponentInContainer {
 	let subtitle = 'Nodecraft Lite';
-	if (game) {
-		subtitle = `${escapeMarkdown(game.name)} · Nodecraft Lite`;
+	if (server.share_type === 'pro') {
+		subtitle = 'Nodecraft Pro';
 	}
-	const text = { type: ComponentType.TextDisplay, content: `### ${escapeMarkdown(title)}\n-# ${subtitle}` } as const;
+	if (game) {
+		subtitle = `${escapeMarkdown(game.name)} · ${subtitle}`;
+	}
+	const text = { type: ComponentType.TextDisplay, content: `### ${escapeMarkdown(server.name)}\n-# ${subtitle}` } as const;
 	if (!game?.icon) {
 		return text;
 	}
@@ -97,8 +102,12 @@ function playersText(server: SharedServer, state: ServerState): string {
 	return ` · ${server.players} players`;
 }
 
-function track(current: ServerState): string {
-	const steps = TRACK.map((step) => {
+function track(server: SharedServer, current: ServerState): string {
+	let path = LITE_TRACK;
+	if (server.share_type === 'pro') {
+		path = PRO_TRACK;
+	}
+	const steps = path.map((step) => {
 		const display = STATES[step];
 		if (step === current) {
 			return `**${display.emoji} ${display.label}**`;
@@ -144,7 +153,7 @@ export function renderCard(server: SharedServer, options: CardOptions): CardMess
 	if (options.layout === 'panel' && options.game?.banner) {
 		children.push({ type: ComponentType.MediaGallery, items: [{ media: { url: options.game.banner }, description: options.game.name }] });
 	}
-	children.push(header(server.name, options.game));
+	children.push(header(server, options.game));
 	children.push({ type: ComponentType.Separator, divider: true, spacing: SeparatorSpacingSize.Small });
 
 	const status = [`${display.emoji} **${display.label}**${playersText(server, state)}`];
@@ -153,7 +162,7 @@ export function renderCard(server: SharedServer, options: CardOptions): CardMess
 		status.push(`\`\`\`\n${view.joinAddress}\n\`\`\``);
 	}
 	if (options.progress) {
-		status.push(track(state));
+		status.push(track(server, state));
 	}
 	if (note) {
 		status.push(`-# ${note}`);
@@ -161,22 +170,26 @@ export function renderCard(server: SharedServer, options: CardOptions): CardMess
 	children.push({ type: ComponentType.TextDisplay, content: status.join('\n') });
 
 	const buttons: APIButtonComponent[] = [];
-	if (action) {
+	// a server that can't be started from here keeps a greyed out Start, so the note reads as the reason why
+	const unavailable = !action && !options.progress && !server.jit_available;
+	if (action || unavailable) {
 		buttons.push({
 			type: ComponentType.Button,
 			style: ButtonStyle.Success,
 			emoji: { name: '⚡' },
-			label: action === 'wake' ? 'Wake' : 'Start',
+			label: 'Start',
+			// "wake" stays in the id so buttons on cards posted before Pro share links keep working
 			custom_id: customId(FEATURE, 'wake', options.cardId),
+			disabled: unavailable,
 		});
 	}
-	// the card refreshes itself during a wake, so manual refreshes would only add load
+	// the card refreshes itself during a start, so manual refreshes would only add load
 	buttons.push(refreshButton(options.cardId, Boolean(options.progress)));
 	if (server.join_article && HTTPS_URL.test(server.join_article) && JOINABLE_STATES.has(state)) {
 		buttons.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'How to join', url: server.join_article });
 	}
-	if (server.jit_share_discord_url && DISCORD_URL.test(server.jit_share_discord_url)) {
-		buttons.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'Contact owner', url: server.jit_share_discord_url });
+	if (server.share_discord_url && DISCORD_URL.test(server.share_discord_url)) {
+		buttons.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'Contact owner', url: server.share_discord_url });
 	}
 	children.push({ type: ComponentType.Separator, divider: false, spacing: SeparatorSpacingSize.Small });
 	children.push({ type: ComponentType.ActionRow, components: buttons });
@@ -213,7 +226,7 @@ export function findCardId(components: readonly ComponentNode[]): string | null 
 
 // For cards that can't show a server, such as a locked or regenerated share link
 export function renderNotice(text: string, cardId: string | null): CardMessage {
-	const children: APIComponentInContainer[] = [{ type: ComponentType.TextDisplay, content: `-# Nodecraft Lite\n${text}` }];
+	const children: APIComponentInContainer[] = [{ type: ComponentType.TextDisplay, content: `-# Nodecraft\n${text}` }];
 	if (cardId) {
 		children.push({ type: ComponentType.ActionRow, components: [refreshButton(cardId, false)] });
 	}

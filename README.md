@@ -2,7 +2,7 @@
 
 Nodecraft's Discord app, running on Cloudflare Workers as an HTTP interactions endpoint (no gateway connection).
 
-Today it covers Nodecraft Lite share links: anyone in a channel can see a Lite server's status and wake it from a card, with the owner's share password and Share Lock still in charge. It's built so more product areas can be added as features.
+Today it covers server share links, for both Lite and Pro servers: anyone in a channel can see a server's status and start it from a card, with the owner's share password and Share Lock still in charge. Lite servers wake from hibernation; Pro servers start if they're deployed, and an archived Pro server waits for its owner to deploy it again. It's built so more product areas can be added as features.
 
 ## How it fits together
 
@@ -11,7 +11,8 @@ Today it covers Nodecraft Lite share links: anyone in a channel can see a Lite s
 - Slow work (controller calls, message edits) runs after a deferred response, inside `waitUntil`.
 - controller is called with the bot's own OAuth client (client credentials) through `@nodecraft/workers-helpers`. Tokens are shared through the `DISCORD_BOT_SETTINGS` KV namespace, the same way billing does it.
 - Card data lives in nodepanel's Postgres through Hyperdrive. The schema is `discord_bot_lite_cards` in [`@nodecraft/db`](https://github.com/nodecraft/db).
-- `WakeWatcher` is a Durable Object per share ID. It collapses parallel wakes into one controller call and polls status every 10 seconds, editing every card until the server is online or 6 minutes pass.
+- `WakeWatcher` is a Durable Object per share ID. It collapses parallel starts into one controller call and polls status every 10 seconds, editing every card until the server is online or 6 minutes pass.
+- Buttons keep their original `custom_id`s (such as `lite:wake:<card id>`) and cards stay in `discord_bot_lite_cards` for both Lite and Pro, so cards posted before Pro share links keep working.
 
 ## Adding a feature
 

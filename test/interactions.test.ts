@@ -37,12 +37,12 @@ describe('interactions endpoint', () => {
 		expect(await response.json()).toEqual({ type: 1 });
 	});
 
-	it('replies privately when the share link is not a Lite link', async () => {
+	it('replies privately when the share link is not a Nodecraft link', async () => {
 		const response = await postInteraction(shareCommand([{ name: 'link', type: 3, value: 'https://example.com/nope' }]));
 		const body = await response.json<{ type: number; data: { flags: number; content: string; }; }>();
 		expect(body.type).toBe(4);
 		expect(body.data.flags).toBe(64);
-		expect(body.data.content).toContain('isn\'t a Lite share link');
+		expect(body.data.content).toContain('isn\'t a Nodecraft share link');
 	});
 
 	it('explains how to share a server, privately, on /nodecraft help', async () => {
