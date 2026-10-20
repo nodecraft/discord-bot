@@ -1,6 +1,9 @@
+import { ApplicationIntegrationType } from 'discord-api-types/v10';
+
 import type { Env } from '../env.ts';
 import type {
 	APIChatInputApplicationCommandInteraction,
+	APIInteraction,
 	APIInteractionResponse,
 	APIMessageApplicationCommandInteraction,
 	APIMessageComponentInteraction,
@@ -38,6 +41,14 @@ export function parseCustomId(value: string): { feature: string; action: string;
 		return null;
 	}
 	return { feature, action, arg: rest.join(':') };
+}
+
+// bot-token actions like posting panels only work where the app is installed to the server, not just the user
+export function isInstalledInGuild(interaction: APIInteraction): boolean {
+	if (!interaction.guild_id) {
+		return false;
+	}
+	return interaction.authorizing_integration_owners[ApplicationIntegrationType.GuildInstall] === interaction.guild_id;
 }
 
 export function interactionUserId(interaction: { member?: { user: { id: string; }; }; user?: { id: string; }; }): string {

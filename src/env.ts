@@ -9,6 +9,9 @@ export interface Env {
 	// per Discord user and per Discord server, across every command and click
 	USER_RATE_LIMIT: RateLimit;
 	GUILD_RATE_LIMIT: RateLimit;
+	// Analytics Engine: requests and background work for engineering, feature usage for product (see src/lib/analytics.ts)
+	TECHNICAL_ANALYTICS: AnalyticsEngineDataset;
+	PRODUCT_ANALYTICS: AnalyticsEngineDataset;
 
 	DISCORD_APPLICATION_ID: string;
 	DISCORD_PUBLIC_KEY: string;

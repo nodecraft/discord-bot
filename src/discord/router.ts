@@ -112,14 +112,45 @@ async function isRateLimited(interaction: APIInteraction, ctx: InteractionContex
 	return outcomes.some(outcome => !outcome.success);
 }
 
-export async function handleInteraction(interaction: APIInteraction, ctx: InteractionContext): Promise<APIInteractionResponse> {
+// A stable label for analytics, like "share" for a subcommand or "lite:wake" for a button
+export function interactionAction(interaction: APIInteraction): string {
+	switch (interaction.type) {
+		case InteractionType.Ping: {
+			return 'ping';
+		}
+		case InteractionType.ApplicationCommand: {
+			if (interaction.data.type === ApplicationCommandType.ChatInput) {
+				return subcommandKey(interaction as APIChatInputApplicationCommandInteraction) ?? interaction.data.name;
+			}
+			return interaction.data.name;
+		}
+		case InteractionType.MessageComponent:
+		case InteractionType.ModalSubmit: {
+			const parsed = parseCustomId(interaction.data.custom_id);
+			if (!parsed) {
+				return 'unknown';
+			}
+			return `${parsed.feature}:${parsed.action}`;
+		}
+		default: {
+			return 'unknown';
+		}
+	}
+}
+
+export interface InteractionResult {
+	response: APIInteractionResponse;
+	outcome: 'error' | 'ok' | 'rate_limited';
+}
+
+export async function handleInteraction(interaction: APIInteraction, ctx: InteractionContext): Promise<InteractionResult> {
 	try {
 		if (await isRateLimited(interaction, ctx)) {
-			return ephemeralMessage('That\'s a lot of requests in a short time. Give it a minute and try again.');
+			return { response: ephemeralMessage('That\'s a lot of requests in a short time. Give it a minute and try again.'), outcome: 'rate_limited' };
 		}
-		return await dispatch(interaction, ctx);
+		return { response: await dispatch(interaction, ctx), outcome: 'ok' };
 	} catch (err) {
 		console.error('Interaction handler failed', err);
-		return ephemeralMessage('Something went wrong. Try again in a moment.');
+		return { response: ephemeralMessage('Something went wrong. Try again in a moment.'), outcome: 'error' };
 	}
 }

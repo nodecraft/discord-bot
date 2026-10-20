@@ -12,6 +12,7 @@ import {
 	editChannelMessage,
 	editOriginalResponse,
 } from '../../discord/rest.ts';
+import { trackEvent, trackTechnical } from '../../lib/analytics.ts';
 import { withDB } from '../../lib/db.ts';
 import { controller, nodecraftErrorCode } from '../../nodecraft/controller.ts';
 
@@ -92,9 +93,14 @@ export interface WatchPanelRequest {
 	game: GameArt | null;
 }
 
+// joined: a wake was already running; no_action: the server didn't need waking; over_budget: woken too often this hour
+export type WakeOutcome = 'joined' | 'no_action' | 'over_budget' | 'started';
+
 export type WakeResult =
-	| { ok: true; }
+	| { ok: true; outcome: WakeOutcome; module?: string; }
 	| { ok: false; code: string; message: string; passwordError: boolean; server: SharedServer | null; game: GameArt | null; };
+
+type AlarmJob = 'cleanup' | 'panel_check' | 'paused' | 'wake_poll';
 
 function failure(err: unknown, server: SharedServer | null, game: GameArt | null): WakeResult {
 	const code = nodecraftErrorCode(err);
@@ -300,6 +306,17 @@ export class WakeWatcher extends DurableObject<Env> {
 		}));
 	}
 
+	// how long people waited and how it ended, measured from the first click
+	private trackFinish(state: WakeState, outcome: 'failed' | 'link_unusable' | 'online' | 'timed_out'): void {
+		trackEvent(this.env, {
+			event: 'wake_finished',
+			outcome,
+			shareId: state.shareId,
+			module: state.server.module,
+			durationMs: Date.now() - state.startedAt,
+		});
+	}
+
 	private async pollWake(state: WakeState): Promise<void> {
 		const timedOut = Date.now() - state.startedAt >= WAKE_TIMEOUT_MS;
 
@@ -312,12 +329,14 @@ export class WakeWatcher extends DurableObject<Env> {
 				await this.ctx.storage.delete('wake');
 				await this.ctx.storage.delete('panels');
 				await this.scheduleCleanup();
+				this.trackFinish(state, 'link_unusable');
 				return;
 			}
 			// treat anything else as transient and poll again
 			console.error('Lite status poll failed', state.shareId, err);
 			if (timedOut) {
 				await this.finishWake(state.server);
+				this.trackFinish(state, 'timed_out');
 			} else {
 				await this.ctx.storage.setAlarm(Date.now() + POLL_INTERVAL_MS);
 			}
@@ -332,6 +351,7 @@ export class WakeWatcher extends DurableObject<Env> {
 			await this.renderAll(state, (cardId, layout) => this.restingCard(state, cardId, layout));
 			// finish first, so an alarm that fires twice doesn't ping everyone twice
 			await this.finishWake(server);
+			this.trackFinish(state, 'online');
 			await this.pingWakers(state, view.joinAddress);
 			return;
 		}
@@ -341,6 +361,7 @@ export class WakeWatcher extends DurableObject<Env> {
 			// controller rolls a failed wake back to stored; other resting states are just the container still booting
 			await this.renderAll(state, (cardId, layout) => this.restingCard(state, cardId, layout, 'The server didn\'t finish waking. Try again, or ask the owner to check Nodecraft.'));
 			await this.finishWake(server);
+			this.trackFinish(state, 'failed');
 			return;
 		}
 		if (state.progress === 'waking' && server.jit_status !== 'stored' && server.jit_status !== 'waking') {
@@ -349,6 +370,7 @@ export class WakeWatcher extends DurableObject<Env> {
 		if (timedOut) {
 			await this.renderAll(state, (cardId, layout) => this.restingCard(state, cardId, layout, 'This is taking longer than usual. Press Refresh in a minute.'));
 			await this.finishWake(server);
+			this.trackFinish(state, 'timed_out');
 			return;
 		}
 
@@ -406,7 +428,7 @@ export class WakeWatcher extends DurableObject<Env> {
 			existing.wakers[request.userId] = request.token;
 			await this.ctx.storage.put('wake', existing);
 			await this.edit(request.cardId, target, this.progressCard(existing, request.cardId, layoutFor(target)));
-			return { ok: true };
+			return { ok: true, outcome: 'joined', module: existing.server.module };
 		}
 
 		const client = await this.client();
@@ -422,7 +444,7 @@ export class WakeWatcher extends DurableObject<Env> {
 		if (!view.action && !alreadyMoving) {
 			await this.edit(request.cardId, target, renderCard(server, { cardId: request.cardId, layout: layoutFor(target), game }));
 			await this.schedulePanelCheck(server);
-			return { ok: true };
+			return { ok: true, outcome: 'no_action', module: server.module };
 		}
 		if (!(await this.takeWakeBudget())) {
 			await this.edit(request.cardId, target, renderCard(server, {
@@ -431,7 +453,7 @@ export class WakeWatcher extends DurableObject<Env> {
 				game,
 				note: 'This server has been woken a lot in the last hour. Try again later, or wake it from Nodecraft.',
 			}));
-			return { ok: true };
+			return { ok: true, outcome: 'over_budget', module: server.module };
 		}
 		if (view.action) {
 			try {
@@ -460,7 +482,7 @@ export class WakeWatcher extends DurableObject<Env> {
 		await this.ctx.storage.put('wake', state);
 		await this.ctx.storage.setAlarm(now + POLL_INTERVAL_MS);
 		await this.renderAll(state, (cardId, layout) => this.progressCard(state, cardId, layout));
-		return { ok: true };
+		return { ok: true, outcome: 'started', module: server.module };
 	}
 
 	private async refreshCard(request: RefreshRequest): Promise<void> {
@@ -490,21 +512,22 @@ export class WakeWatcher extends DurableObject<Env> {
 		}
 	}
 
-	private async runAlarm(): Promise<void> {
+	private async runAlarm(): Promise<AlarmJob> {
 		// an operator kill switch: each watcher stops at its next alarm instead of rescheduling
 		if (this.env.LITE_BACKGROUND_UPDATES === 'off') {
-			return;
+			return 'paused';
 		}
 		const state = await this.ctx.storage.get<WakeState>('wake');
 		if (state) {
 			await this.pollWake(state);
-			return;
+			return 'wake_poll';
 		}
 		if (Object.keys(await this.panels()).length === 0) {
 			await this.cleanUp();
-			return;
+			return 'cleanup';
 		}
 		await this.checkPanels();
+		return 'panel_check';
 	}
 
 	watchPanel(request: WatchPanelRequest): Promise<void> {
@@ -524,6 +547,17 @@ export class WakeWatcher extends DurableObject<Env> {
 	}
 
 	alarm(): Promise<void> {
-		return this.exclusive(() => this.runAlarm());
+		return this.exclusive(async () => {
+			const startedAt = Date.now();
+			// the job is only known once it finishes, and a throw means the runtime retries the alarm
+			let job = 'unknown';
+			let outcome = 'error';
+			try {
+				job = await this.runAlarm();
+				outcome = 'ok';
+			} finally {
+				trackTechnical(this.env, { type: 'alarm', name: job, outcome, durationMs: Date.now() - startedAt });
+			}
+		});
 	}
 }

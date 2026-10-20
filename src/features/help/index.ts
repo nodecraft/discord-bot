@@ -1,5 +1,6 @@
 import { HELP_SUBCOMMAND } from './commands.ts';
 import { ephemeralMessage } from '../../discord/responses.ts';
+import { trackEvent } from '../../lib/analytics.ts';
 
 import type { Feature } from '../../discord/types.ts';
 
@@ -21,6 +22,9 @@ const HELP_TEXT = [
 export const help: Feature = {
 	name: 'help',
 	subcommands: {
-		[HELP_SUBCOMMAND]: () => ephemeralMessage(HELP_TEXT),
+		[HELP_SUBCOMMAND]: (interaction, ctx) => {
+			trackEvent(ctx.env, { event: 'help' }, interaction);
+			return ephemeralMessage(HELP_TEXT);
+		},
 	},
 };

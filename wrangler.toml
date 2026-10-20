@@ -18,6 +18,12 @@ hyperdrive = [
 	{ binding = "HYPERDRIVE", id = "f77a85ca2d4a4200aa403723d8420452", localConnectionString = "postgres://postgres:postgres@localhost:5432/nodepanel" },
 ]
 
+# kept apart from production's datasets so testing never shows up on the Grafana dashboards
+analytics_engine_datasets = [
+	{ binding = "TECHNICAL_ANALYTICS", dataset = "DISCORD_BOT_TECHNICAL_DEV" },
+	{ binding = "PRODUCT_ANALYTICS", dataset = "DISCORD_BOT_PRODUCT_DEV" },
+]
+
 # Secrets (wrangler secret put, or .dev.vars locally):
 # DISCORD_APPLICATION_ID, DISCORD_PUBLIC_KEY, DISCORD_BOT_TOKEN,
 # NODECRAFT_CLIENT_ID, NODECRAFT_CLIENT_SECRET, CARD_ENCRYPTION_KEY
@@ -71,6 +77,15 @@ id = "9a80e276f6be409692736367d44c0738"
 [[env.production.hyperdrive]]
 binding = "HYPERDRIVE"
 id = "f77a85ca2d4a4200aa403723d8420452"
+
+# queried by Grafana (grafana-sync: Workers/discord-bot*.json); column order is defined in src/lib/analytics.ts
+[[env.production.analytics_engine_datasets]]
+binding = "TECHNICAL_ANALYTICS"
+dataset = "DISCORD_BOT_TECHNICAL"
+
+[[env.production.analytics_engine_datasets]]
+binding = "PRODUCT_ANALYTICS"
+dataset = "DISCORD_BOT_PRODUCT"
 
 [[env.production.durable_objects.bindings]]
 name = "WAKE_WATCHER"

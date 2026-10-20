@@ -1,6 +1,5 @@
 import {
 	ApplicationCommandOptionType,
-	ApplicationIntegrationType,
 	ComponentType,
 	InteractionResponseType,
 	TextInputStyle,
@@ -34,13 +33,14 @@ import {
 	deleteChannelMessage,
 	editOriginalResponse,
 } from '../../discord/rest.ts';
-import { customId, interactionUserId } from '../../discord/types.ts';
+import { customId, interactionUserId, isInstalledInGuild } from '../../discord/types.ts';
+import { trackEvent, trackTechnical } from '../../lib/analytics.ts';
 import { withDB } from '../../lib/db.ts';
-import { controller } from '../../nodecraft/controller.ts';
+import { controller, nodecraftErrorCode } from '../../nodecraft/controller.ts';
 
 import type { SharedServer } from './api.ts';
 import type { LiteCard, PasswordMode } from './store.ts';
-import type { PanelRef } from './wake-watcher.ts';
+import type { PanelRef, WakeResult } from './wake-watcher.ts';
 import type {
 	ComponentHandler,
 	InteractionContext,
@@ -80,14 +80,6 @@ function stringOption(options: Map<string, APIApplicationCommandInteractionDataB
 	return undefined;
 }
 
-// panels are posted with the bot token, which only works where the app is installed to the server
-function isInstalledInGuild(interaction: APIInteraction): boolean {
-	if (!interaction.guild_id) {
-		return false;
-	}
-	return interaction.authorizing_integration_owners[ApplicationIntegrationType.GuildInstall] === interaction.guild_id;
-}
-
 function passwordModeFor(server: SharedServer, password: string | undefined): PasswordMode {
 	if (!server.jit_share_password_enabled) {
 		return 'none';
@@ -98,15 +90,26 @@ function passwordModeFor(server: SharedServer, password: string | undefined): Pa
 	return 'ask';
 }
 
-function runInBackground(ctx: InteractionContext, token: string, work: () => Promise<void>) {
-	ctx.waitUntil(work().catch(async (err) => {
+// the deferred work is what users wait on, so it's timed separately from the instant reply to Discord
+async function backgroundTask(ctx: InteractionContext, task: string, token: string, work: () => Promise<void>): Promise<void> {
+	const startedAt = Date.now();
+	let outcome = 'ok';
+	try {
+		await work();
+	} catch (err) {
+		outcome = 'error';
 		console.error('Lite background task failed', err);
 		try {
 			await editOriginalResponse(ctx.env, token, renderNotice(errorMessage(err), null));
 		} catch {
 			// nothing left to tell the user with
 		}
-	}));
+	}
+	trackTechnical(ctx.env, { type: 'task', name: task, outcome, durationMs: Date.now() - startedAt });
+}
+
+function runInBackground(ctx: InteractionContext, task: string, token: string, work: () => Promise<void>) {
+	ctx.waitUntil(backgroundTask(ctx, task, token, work));
 }
 
 // each panel keeps a scheduled status check alive, so they're capped where one server or one popular link could pile them up
@@ -144,8 +147,38 @@ function cardRequest(card: LiteCard, token: string) {
 	return { shareId: card.share_id, cardId: card.id, token, panel: card.is_panel, panelMessage };
 }
 
-async function runWake(ctx: InteractionContext, card: LiteCard, token: string, userId: string, password: string | undefined): Promise<void> {
-	const result = await watcher(ctx.env, card.share_id).wake({ ...cardRequest(card, token), userId, password });
+type WakeSource = 'button' | 'password' | 'right_click_card' | 'right_click_link';
+
+type TokenInteraction = APIInteraction & { token: string; };
+
+function trackWake(ctx: InteractionContext, interaction: TokenInteraction, card: LiteCard, source: WakeSource, result: WakeResult) {
+	let outcome: string;
+	let module: string | undefined;
+	if (result.ok) {
+		outcome = result.outcome;
+		module = result.module;
+	} else {
+		outcome = result.code;
+		if (result.passwordError) {
+			outcome = 'wrong_password';
+		}
+		module = result.server?.module;
+	}
+	trackEvent(ctx.env, {
+		event: 'wake',
+		outcome,
+		shareId: card.share_id,
+		module,
+		source,
+		layout: layoutOf(card),
+		passwordMode: card.password_mode,
+	}, interaction);
+}
+
+async function runWake(ctx: InteractionContext, interaction: TokenInteraction, card: LiteCard, source: WakeSource, password: string | undefined): Promise<void> {
+	const token = interaction.token;
+	const result = await watcher(ctx.env, card.share_id).wake({ ...cardRequest(card, token), userId: interactionUserId(interaction), password });
+	trackWake(ctx, interaction, card, source, result);
 	if (result.ok) {
 		return;
 	}
@@ -177,11 +210,24 @@ async function postShareCard(
 	password: string | undefined,
 	isPanel: boolean,
 ): Promise<void> {
+	let layout: 'card' | 'panel' = 'card';
+	if (isPanel) {
+		layout = 'panel';
+	}
+	const track = (outcome: string, server?: SharedServer) => {
+		let passwordMode: PasswordMode | undefined;
+		if (server) {
+			passwordMode = passwordModeFor(server, password);
+		}
+		trackEvent(ctx.env, { event: 'share', outcome, shareId, module: server?.module, source: 'command', layout, passwordMode }, interaction);
+	};
+
 	const client = await controller(ctx.env, ctx.waitUntil);
 	let server: SharedServer;
 	try {
 		server = await getSharedServer(client, shareId);
 	} catch (err) {
+		track(nodecraftErrorCode(err) ?? 'error');
 		await editOriginalResponse(ctx.env, interaction.token, renderNotice(errorMessage(err), null));
 		return;
 	}
@@ -190,6 +236,7 @@ async function postShareCard(
 	if (isPanel) {
 		const limitMessage = await panelLimitMessage(ctx.env, interaction.guild_id ?? '', shareId, channelId);
 		if (limitMessage) {
+			track('panel_limit', server);
 			await editOriginalResponse(ctx.env, interaction.token, { content: limitMessage });
 			return;
 		}
@@ -208,6 +255,7 @@ async function postShareCard(
 
 	if (!isPanel) {
 		await editOriginalResponse(ctx.env, interaction.token, message);
+		track('posted', server);
 		return;
 	}
 	let messageId: string;
@@ -218,11 +266,13 @@ async function postShareCard(
 		// the panel never made it into the channel, so it mustn't count toward the caps or replace the existing one
 		await withDB(ctx.env, db => retirePanels(db, [card.id]));
 		if (err instanceof DiscordApiError && err.status === 403) {
+			track('no_permission', server);
 			await editOriginalResponse(ctx.env, interaction.token, { content: 'I can\'t post in this channel. Check that Nodecraft can view and send messages here.' });
 			return;
 		}
 		throw err;
 	}
+	track('posted', server);
 	await withDB(ctx.env, db => setMessageId(db, card.id, messageId));
 	const previousPanel = await withDB(ctx.env, db => takeExistingPanel(db, channelId, card.id));
 	await watcher(ctx.env, shareId).watchPanel({ cardId: card.id, message: { channelId, messageId }, server, game });
@@ -239,15 +289,17 @@ export const shareCommand: SubcommandHandler = (interaction, ctx) => {
 	const options = subcommandOptions(interaction);
 	const shareId = parseShareInput(stringOption(options, SHARE_OPTIONS.link) ?? '');
 	if (!shareId) {
+		trackEvent(ctx.env, { event: 'share', outcome: 'invalid_link', source: 'command' }, interaction);
 		return ephemeralMessage('That isn\'t a Lite share link. It looks like https://app.nodecraft.com/shared/...');
 	}
 	const panelOption = options.get(SHARE_OPTIONS.panel);
 	const isPanel = panelOption?.type === ApplicationCommandOptionType.Boolean && panelOption.value;
 	if (isPanel && !isInstalledInGuild(interaction)) {
+		trackEvent(ctx.env, { event: 'share', outcome: 'needs_install', shareId, source: 'command', layout: 'panel' }, interaction);
 		return ephemeralMessage('To pin a panel, add Nodecraft to this server first. You can still post a regular card without `panel`.');
 	}
 	const password = stringOption(options, SHARE_OPTIONS.password);
-	runInBackground(ctx, interaction.token, () => postShareCard(ctx, interaction, shareId, password, isPanel));
+	runInBackground(ctx, 'share', interaction.token, () => postShareCard(ctx, interaction, shareId, password, isPanel));
 	// panels are posted separately, so the command's own reply stays private
 	return deferredMessage(isPanel);
 };
@@ -275,17 +327,18 @@ function passwordModal(cardId: string): APIInteractionResponse {
 }
 
 // shared by the Wake button and right-clicking a card, which differ only in whether the reply replaces the card or follows it
-async function wakeCard(interaction: APIInteraction & { token: string; }, ctx: InteractionContext, cardId: string, deferred: APIInteractionResponse): Promise<APIInteractionResponse> {
+async function wakeCard(interaction: TokenInteraction, ctx: InteractionContext, cardId: string, source: WakeSource, deferred: APIInteractionResponse): Promise<APIInteractionResponse> {
 	const card = await withDB(ctx.env, db => getCard(db, cardId));
 	if (!card) {
 		return ephemeralMessage(CARD_EXPIRED);
 	}
 	if (card.password_mode === 'ask') {
+		trackEvent(ctx.env, { event: 'password_prompt', shareId: card.share_id, source, layout: layoutOf(card), passwordMode: card.password_mode }, interaction);
 		return passwordModal(card.id);
 	}
-	runInBackground(ctx, interaction.token, async () => {
+	runInBackground(ctx, 'wake', interaction.token, async () => {
 		const password = await cardPassword(ctx.env, card);
-		await runWake(ctx, card, interaction.token, interactionUserId(interaction), password);
+		await runWake(ctx, interaction, card, source, password);
 	});
 	return deferred;
 }
@@ -299,31 +352,41 @@ export const wakeMessageCommand: MessageCommandHandler = (interaction, ctx) => {
 	if (target.author.id === ctx.env.DISCORD_APPLICATION_ID) {
 		const cardId = findCardId(target.components ?? []);
 		if (cardId) {
-			return wakeCard(interaction, ctx, cardId, deferredMessage(false));
+			return wakeCard(interaction, ctx, cardId, 'right_click_card', deferredMessage(false));
 		}
 	}
 	const shareId = findShareIdInMessage(target);
 	if (!shareId) {
+		trackEvent(ctx.env, { event: 'share', outcome: 'invalid_link', source: 'right_click_link' }, interaction);
 		return ephemeralMessage(NO_LINK_FOUND);
 	}
-	runInBackground(ctx, interaction.token, async () => {
+	runInBackground(ctx, 'wake_link', interaction.token, async () => {
 		const client = await controller(ctx.env, ctx.waitUntil);
 		let server: SharedServer;
 		try {
 			server = await getSharedServer(client, shareId);
 		} catch (err) {
+			trackEvent(ctx.env, { event: 'share', outcome: nodecraftErrorCode(err) ?? 'error', shareId, source: 'right_click_link', layout: 'card' }, interaction);
 			await editOriginalResponse(ctx.env, interaction.token, renderNotice(errorMessage(err), null));
 			return;
 		}
-		const userId = interactionUserId(interaction);
 		const card = await withDB(ctx.env, db => createCard(db, ctx.env, {
 			shareId,
 			guildId: interaction.guild_id ?? null,
 			channelId: interaction.channel.id,
-			createdBy: userId,
+			createdBy: interactionUserId(interaction),
 			isPanel: false,
 			passwordMode: passwordModeFor(server, undefined),
 		}));
+		trackEvent(ctx.env, {
+			event: 'share',
+			outcome: 'posted',
+			shareId,
+			module: server.module,
+			source: 'right_click_link',
+			layout: 'card',
+			passwordMode: card.password_mode,
+		}, interaction);
 		if (card.password_mode === 'ask') {
 			await editOriginalResponse(ctx.env, interaction.token, renderCard(server, {
 				cardId: card.id,
@@ -332,7 +395,7 @@ export const wakeMessageCommand: MessageCommandHandler = (interaction, ctx) => {
 			}));
 			return;
 		}
-		await runWake(ctx, card, interaction.token, userId, undefined);
+		await runWake(ctx, interaction, card, 'right_click_link', undefined);
 	});
 	return deferredMessage(false);
 };
@@ -355,7 +418,7 @@ function modalValue(data: APIModalSubmission, inputId: string): string | undefin
 	return undefined;
 }
 
-export const wakeButton: ComponentHandler = (interaction, ctx, cardId) => wakeCard(interaction, ctx, cardId, deferredUpdate());
+export const wakeButton: ComponentHandler = (interaction, ctx, cardId) => wakeCard(interaction, ctx, cardId, 'button', deferredUpdate());
 
 export const passwordSubmit: ModalHandler = async (interaction, ctx, cardId) => {
 	const card = await withDB(ctx.env, db => getCard(db, cardId));
@@ -363,7 +426,7 @@ export const passwordSubmit: ModalHandler = async (interaction, ctx, cardId) => 
 		return ephemeralMessage(CARD_EXPIRED);
 	}
 	const password = modalValue(interaction.data, PASSWORD_INPUT);
-	runInBackground(ctx, interaction.token, () => runWake(ctx, card, interaction.token, interactionUserId(interaction), password));
+	runInBackground(ctx, 'wake', interaction.token, () => runWake(ctx, interaction, card, 'password', password));
 	// a modal opened from a right-click has no message to update, so it gets a new reply instead
 	if (interaction.message) {
 		return deferredUpdate();
@@ -376,6 +439,7 @@ export const refreshButton: ComponentHandler = async (interaction, ctx, cardId) 
 	if (!card) {
 		return ephemeralMessage(CARD_EXPIRED);
 	}
-	runInBackground(ctx, interaction.token, () => watcher(ctx.env, card.share_id).refresh(cardRequest(card, interaction.token)));
+	trackEvent(ctx.env, { event: 'refresh', shareId: card.share_id, layout: layoutOf(card), passwordMode: card.password_mode }, interaction);
+	runInBackground(ctx, 'refresh', interaction.token, () => watcher(ctx.env, card.share_id).refresh(cardRequest(card, interaction.token)));
 	return deferredUpdate();
 };

@@ -12,6 +12,7 @@ Today it covers Nodecraft Lite share links: anyone in a channel can see a Lite s
 - controller is called with the bot's own OAuth client (client credentials) through `@nodecraft/workers-helpers`. Tokens are shared through the `DISCORD_BOT_SETTINGS` KV namespace, the same way billing does it.
 - Card data lives in nodepanel's Postgres through Hyperdrive. The schema is `discord_bot_lite_cards` in [`@nodecraft/db`](https://github.com/nodecraft/db).
 - `WakeWatcher` is a Durable Object per share ID. It collapses parallel wakes into one controller call and polls status every 10 seconds, editing every card until the server is online or 6 minutes pass.
+- Analytics go to two Workers Analytics Engine datasets, charted in Grafana (`grafana-sync`, Workers folder). `DISCORD_BOT_TECHNICAL` has every request, background task and `WakeWatcher` alarm with timings. `DISCORD_BOT_PRODUCT` has feature events such as shares and wakes. Columns are positional, so only append fields in `src/lib/analytics.ts`.
 
 ## Adding a feature
 

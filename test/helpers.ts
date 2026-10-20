@@ -3,6 +3,8 @@ import { env } from 'cloudflare:workers';
 
 import worker from '../src/index.ts';
 
+import type { Env } from '../src/env.ts';
+
 // test-only key; its public half is DISCORD_PUBLIC_KEY in vitest.config.ts
 const TEST_PRIVATE_KEY = 'MC4CAQAwBQYDK2VwBCIEIBru4G9nwUIZqOBj8NwNADtykp+hAn97uvagmAXRfrOA';
 
@@ -25,7 +27,7 @@ export async function sign(timestamp: string, body: string): Promise<string> {
 	return toHex(signature);
 }
 
-export async function postInteraction(payload: unknown, headers: Record<string, string> = {}): Promise<Response> {
+export async function postInteraction(payload: unknown, headers: Record<string, string> = {}, bindings: Partial<Env> = {}): Promise<Response> {
 	const body = JSON.stringify(payload);
 	const timestamp = String(Math.floor(Date.now() / 1000));
 	const request = new Request('http://localhost/interactions', {
@@ -39,7 +41,7 @@ export async function postInteraction(payload: unknown, headers: Record<string, 
 		body,
 	});
 	const ctx = createExecutionContext();
-	const response = await worker.fetch(request, env, ctx);
+	const response = await worker.fetch(request, { ...env, ...bindings }, ctx);
 	await waitOnExecutionContext(ctx);
 	return response;
 }
