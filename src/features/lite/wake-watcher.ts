@@ -34,6 +34,8 @@ const PANEL_RETRY_MS = 5 * 60000;
 // wakes are deduplicated, but one share being re-woken all day would keep a watcher polling non-stop
 const WAKE_BUDGET = 6;
 const WAKE_BUDGET_WINDOW_MS = 60 * 60000;
+// long enough that shares in regular use never churn, so only abandoned ones pay for the delete
+const IDLE_CLEANUP_MS = 30 * 24 * 60 * 60000;
 
 interface Target {
 	token: string;
@@ -84,7 +86,6 @@ export interface WakeRequest extends CardRequest {
 export type RefreshRequest = CardRequest;
 
 export interface WatchPanelRequest {
-	shareId: string;
 	cardId: string;
 	message: PanelRef;
 	server: SharedServer;
@@ -112,6 +113,15 @@ function layoutFor(target: Target): Layout {
 
 // One instance per share ID: it collapses parallel wakes into one controller call, and keeps every card and panel updated
 export class WakeWatcher extends DurableObject<Env> {
+	// input gates only hold during storage calls, so a click landing while a poll awaits Discord would otherwise lose its target
+	private queue: Promise<unknown> = Promise.resolve();
+
+	private exclusive<T>(work: () => Promise<T>): Promise<T> {
+		const run = this.queue.then(work);
+		this.queue = run.catch(() => {});
+		return run;
+	}
+
 	// built per call, not kept on the instance, so token refreshes always go through KV like the Worker's
 	private client() {
 		return controller(this.env, promise => this.ctx.waitUntil(promise));
@@ -130,12 +140,31 @@ export class WakeWatcher extends DurableObject<Env> {
 	}
 
 	private async remember(request: CardRequest): Promise<void> {
-		await this.ctx.storage.put('shareId', request.shareId);
 		if (request.panel && request.panelMessage) {
 			const panels = await this.panels();
 			panels[request.cardId] = request.panelMessage;
 			await this.ctx.storage.put('panels', panels);
 		}
+		// failed wakes and refreshes still write storage, so make sure some alarm will come back to clean it up
+		if (await this.ctx.storage.getAlarm() === null) {
+			await this.scheduleCleanup();
+		}
+	}
+
+	// storage is billed until it's deleted, and most shares are clicked once and never again
+	private async scheduleCleanup(): Promise<void> {
+		await this.ctx.storage.setAlarm(Date.now() + IDLE_CLEANUP_MS);
+	}
+
+	private async cleanUp(): Promise<void> {
+		const wakeLog = await this.ctx.storage.get<number[]>('wakeLog') ?? [];
+		const lastWake = wakeLog.at(-1) ?? 0;
+		// deleting the log early would hand back the wake budget
+		if (Date.now() - lastWake < WAKE_BUDGET_WINDOW_MS) {
+			await this.ctx.storage.setAlarm(lastWake + WAKE_BUDGET_WINDOW_MS);
+			return;
+		}
+		await this.ctx.storage.deleteAll();
 	}
 
 	// fetches status and art together, and remembers them so refreshes can share one controller call
@@ -226,11 +255,11 @@ export class WakeWatcher extends DurableObject<Env> {
 		if (await this.loadWake()) {
 			return;
 		}
-		const panels = await this.panels();
-		let next: number | null = null;
-		if (Object.keys(panels).length > 0) {
-			next = nextPanelCheck(server, Date.now());
+		if (Object.keys(await this.panels()).length === 0) {
+			await this.scheduleCleanup();
+			return;
 		}
+		const next = nextPanelCheck(server, Date.now());
 		if (next === null) {
 			await this.ctx.storage.deleteAlarm();
 		} else {
@@ -282,7 +311,7 @@ export class WakeWatcher extends DurableObject<Env> {
 				await this.renderAll(state, cardId => renderNotice(errorMessage(err), cardId));
 				await this.ctx.storage.delete('wake');
 				await this.ctx.storage.delete('panels');
-				await this.ctx.storage.deleteAlarm();
+				await this.scheduleCleanup();
 				return;
 			}
 			// treat anything else as transient and poll again
@@ -301,8 +330,9 @@ export class WakeWatcher extends DurableObject<Env> {
 
 		if (view.state === 'online') {
 			await this.renderAll(state, (cardId, layout) => this.restingCard(state, cardId, layout));
-			await this.pingWakers(state, view.joinAddress);
+			// finish first, so an alarm that fires twice doesn't ping everyone twice
 			await this.finishWake(server);
+			await this.pingWakers(state, view.joinAddress);
 			return;
 		}
 		if (view.state === 'waking' || view.state === 'starting') {
@@ -328,8 +358,9 @@ export class WakeWatcher extends DurableObject<Env> {
 	}
 
 	private async checkPanels(): Promise<void> {
-		const shareId = await this.ctx.storage.get<string>('shareId');
-		if (!shareId || Object.keys(await this.panels()).length === 0) {
+		// watchers are always reached by share ID, and the runtime keeps that name for alarms too
+		const shareId = this.ctx.id.name;
+		if (!shareId) {
 			return;
 		}
 		let snapshot: Snapshot;
@@ -349,8 +380,7 @@ export class WakeWatcher extends DurableObject<Env> {
 		await this.schedulePanelCheck(snapshot.server);
 	}
 
-	async watchPanel(request: WatchPanelRequest): Promise<void> {
-		await this.ctx.storage.put('shareId', request.shareId);
+	private async addPanel(request: WatchPanelRequest): Promise<void> {
 		const panels = await this.panels();
 		panels[request.cardId] = request.message;
 		await this.ctx.storage.put('panels', panels);
@@ -358,16 +388,16 @@ export class WakeWatcher extends DurableObject<Env> {
 		await this.schedulePanelCheck(request.server);
 	}
 
-	async unwatchPanel(cardId: string): Promise<void> {
+	private async removePanel(cardId: string): Promise<void> {
 		const panels = await this.panels();
 		delete panels[cardId];
 		await this.ctx.storage.put('panels', panels);
 		if (Object.keys(panels).length === 0 && !(await this.loadWake())) {
-			await this.ctx.storage.deleteAlarm();
+			await this.scheduleCleanup();
 		}
 	}
 
-	async wake(request: WakeRequest): Promise<WakeResult> {
+	private async beginWake(request: WakeRequest): Promise<WakeResult> {
 		await this.remember(request);
 		const target = { token: request.token, addedAt: Date.now(), panel: request.panel };
 		const existing = await this.loadWake();
@@ -433,7 +463,7 @@ export class WakeWatcher extends DurableObject<Env> {
 		return { ok: true };
 	}
 
-	async refresh(request: RefreshRequest): Promise<void> {
+	private async refreshCard(request: RefreshRequest): Promise<void> {
 		await this.remember(request);
 		const target = { token: request.token, addedAt: Date.now(), panel: request.panel };
 		const existing = await this.loadWake();
@@ -460,7 +490,7 @@ export class WakeWatcher extends DurableObject<Env> {
 		}
 	}
 
-	async alarm(): Promise<void> {
+	private async runAlarm(): Promise<void> {
 		// an operator kill switch: each watcher stops at its next alarm instead of rescheduling
 		if (this.env.LITE_BACKGROUND_UPDATES === 'off') {
 			return;
@@ -470,6 +500,30 @@ export class WakeWatcher extends DurableObject<Env> {
 			await this.pollWake(state);
 			return;
 		}
+		if (Object.keys(await this.panels()).length === 0) {
+			await this.cleanUp();
+			return;
+		}
 		await this.checkPanels();
+	}
+
+	watchPanel(request: WatchPanelRequest): Promise<void> {
+		return this.exclusive(() => this.addPanel(request));
+	}
+
+	unwatchPanel(cardId: string): Promise<void> {
+		return this.exclusive(() => this.removePanel(cardId));
+	}
+
+	wake(request: WakeRequest): Promise<WakeResult> {
+		return this.exclusive(() => this.beginWake(request));
+	}
+
+	refresh(request: RefreshRequest): Promise<void> {
+		return this.exclusive(() => this.refreshCard(request));
+	}
+
+	alarm(): Promise<void> {
+		return this.exclusive(() => this.runAlarm());
 	}
 }

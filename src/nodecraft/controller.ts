@@ -1,6 +1,11 @@
 import { nc_fetch_oauth } from '@nodecraft/workers-helpers';
 
+import { withTimeout } from '../lib/timeout.ts';
+
 import type { Env } from '../env.ts';
+
+// covers nc_fetch's own retries too, which otherwise retry a temporarily unavailable controller with no limit
+const REQUEST_TIMEOUT_MS = 15000;
 
 // keyed by client so environments sharing a namespace never pick up each other's tokens
 function oauthKey(env: Env): string {
@@ -41,15 +46,15 @@ export async function controller(env: Env, waitUntil?: (promise: Promise<unknown
 	}
 	// a scope change in config means the stored token no longer matches what we need
 	if (client.status === 'no_auth' || stored?.scope !== env.NODECRAFT_OAUTH_SCOPE) {
-		await client.clientCredentials();
+		await withTimeout(REQUEST_TIMEOUT_MS, () => client.clientCredentials());
 	}
 	return client;
 }
 
 // controller wraps payloads as { success, code, message, data }; nc_fetch_oauth throws when success is false
 export async function controllerData<T>(client: ControllerClient, path: string, init?: RequestInit): Promise<T> {
-	const response = await client.request(path, init);
-	return response.data.data as T;
+	const response = await withTimeout<{ data: { data: T; }; }>(REQUEST_TIMEOUT_MS, () => client.request(path, init));
+	return response.data.data;
 }
 
 interface NodecraftFetchError extends Error {

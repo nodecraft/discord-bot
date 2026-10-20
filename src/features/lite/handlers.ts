@@ -125,7 +125,7 @@ function layoutOf(card: LiteCard) {
 }
 
 function watcher(env: Env, shareId: string) {
-	return env.WAKE_WATCHER.get(env.WAKE_WATCHER.idFromName(shareId));
+	return env.WAKE_WATCHER.getByName(shareId);
 }
 
 // what the watcher needs to know about a card on each click, including where a panel lives so it can keep editing it
@@ -217,7 +217,7 @@ async function postShareCard(
 		}
 		throw err;
 	}
-	await watcher(ctx.env, shareId).watchPanel({ shareId, cardId: card.id, message: { channelId, messageId }, server, game });
+	await watcher(ctx.env, shareId).watchPanel({ cardId: card.id, message: { channelId, messageId }, server, game });
 	if (previousPanel) {
 		await watcher(ctx.env, previousPanel.share_id).unwatchPanel(previousPanel.id).catch(() => {});
 		if (previousPanel.message_id) {

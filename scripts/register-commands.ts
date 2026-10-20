@@ -23,6 +23,8 @@ const response = await fetch(`https://discord.com/api/v10${path}`, {
 		'content-type': 'application/json',
 	},
 	body: JSON.stringify(commands),
+	// runs in the deploy job, which shouldn't sit on a stuck request until its 15 minute timeout
+	signal: AbortSignal.timeout(30000),
 });
 
 if (!response.ok) {

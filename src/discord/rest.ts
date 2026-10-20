@@ -1,3 +1,5 @@
+import { withTimeout } from '../lib/timeout.ts';
+
 import type { Env } from '../env.ts';
 import type {
 	RESTPatchAPIChannelMessageJSONBody,
@@ -9,6 +11,8 @@ import type {
 
 const API_BASE = 'https://discord.com/api/v10';
 const MAX_RETRY_AFTER_SECONDS = 5;
+// a hung edit would otherwise hold up every other click on the same share's watcher
+const REQUEST_TIMEOUT_MS = 10000;
 
 export class DiscordApiError extends Error {
 	readonly status: number;
@@ -36,11 +40,12 @@ function send(request: DiscordRequest): Promise<Response> {
 	if (request.botToken) {
 		headers.authorization = `Bot ${request.botToken}`;
 	}
-	return fetch(`${API_BASE}${request.path}`, {
+	return withTimeout(REQUEST_TIMEOUT_MS, signal => fetch(`${API_BASE}${request.path}`, {
 		method: request.method,
 		headers,
 		body: request.body === undefined ? undefined : JSON.stringify(request.body),
-	});
+		signal,
+	}));
 }
 
 async function discordFetch<T>(request: DiscordRequest): Promise<T> {
