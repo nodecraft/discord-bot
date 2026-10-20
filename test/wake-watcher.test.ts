@@ -10,7 +10,7 @@ describe('WakeWatcher cleanup', () => {
 		await runInDurableObject(stub, async (_instance, state) => {
 			await state.storage.put('snapshot', { at: 0 });
 			await state.storage.put('wakeLog', [Date.now() - (2 * HOUR_MS)]);
-			await state.storage.setAlarm(Date.now());
+			await state.storage.setAlarm(Date.now() + HOUR_MS);
 		});
 		expect(await runDurableObjectAlarm(stub)).toBe(true);
 		await runInDurableObject(stub, async (_instance, state) => {
@@ -25,7 +25,7 @@ describe('WakeWatcher cleanup', () => {
 		const lastWake = Date.now() - (10 * 60000);
 		await runInDurableObject(stub, async (_instance, state) => {
 			await state.storage.put('wakeLog', [lastWake]);
-			await state.storage.setAlarm(Date.now());
+			await state.storage.setAlarm(Date.now() + HOUR_MS);
 		});
 		await runDurableObjectAlarm(stub);
 		await runInDurableObject(stub, async (_instance, state) => {
