@@ -139,24 +139,12 @@ describe('secret encryption', () => {
 describe('nextPanelCheck', () => {
 	const now = Date.parse('2026-10-20T12:00:00Z');
 
-	it('keeps checking a hibernating server every 2 hours to catch wakes from outside Discord', () => {
-		expect(nextPanelCheck(server({ jit_status: 'stored', status: 'offline' }), now)).toBe(now + 7_200_000);
+	it('stops checking once the server is hibernating, since controller pushes the next change', () => {
+		expect(nextPanelCheck(server({ jit_status: 'stored', status: 'offline' }), now)).toBeNull();
 	});
 
-	it('aims just past the expiry, which is when controller moves an idle server toward hibernation', () => {
-		const expires = '2026-10-20T12:20:00Z';
-		expect(nextPanelCheck(server({ jit_status: 'hot', jit_expires_date: expires }), now)).toBe(Date.parse(expires) + 30000);
-	});
-
-	it('backs off to every 5 minutes when the expiry is stale, such as a locked server the idle scan skips', () => {
-		expect(nextPanelCheck(server({ jit_status: 'ready_to_store', jit_expires_date: '2026-10-20T11:00:00Z' }), now)).toBe(now + 300000);
-	});
-
-	it('waits at least a minute even when the expiry is moments away', () => {
-		expect(nextPanelCheck(server({ jit_status: 'hot', jit_expires_date: '2026-10-20T12:00:05Z' }), now)).toBe(now + 60000);
-	});
-
-	it('checks in every 10 minutes while players keep a server live', () => {
+	it('checks in every 10 minutes while awake, since player counts are never pushed', () => {
 		expect(nextPanelCheck(server({ jit_status: 'live', jit_expires_date: null }), now)).toBe(now + 600000);
+		expect(nextPanelCheck(server({ jit_status: 'hot', jit_expires_date: '2026-10-20T12:20:00Z' }), now)).toBe(now + 600000);
 	});
 });

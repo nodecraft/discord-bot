@@ -76,35 +76,13 @@ export function describeServer(server: SharedServer): ServerView {
 	return { state: 'offline', action: 'start', joinAddress: null, note: null };
 }
 
-const MINUTE_MS = 60000;
-// controller's idle scan runs every 5 minutes, so give it a moment past the expiry before looking
-const EXPIRY_GRACE_MS = 30000;
-// while players keep a server live there's no expiry to aim at, so check in occasionally
-const LIVE_RECHECK_MS = 10 * MINUTE_MS;
-const SAVING_RECHECK_MS = 2 * MINUTE_MS;
-// an expiry already in the past (a locked server the idle scan skips, or a slow scan) would otherwise mean a check every minute forever
-const STALE_EXPIRY_RECHECK_MS = 5 * MINUTE_MS;
-// wakes from nodepanel or the dashboard never reach the bot, so a slow check keeps hibernating panels from going stale
-const HIBERNATING_RECHECK_MS = 120 * MINUTE_MS;
+// controller pushes every JIT step, but player counts never reach the bot that way, and a push can beat the heartbeat cache
+const AWAKE_RECHECK_MS = 10 * 60000;
 
-// When a pinned panel should next look at its server
-export function nextPanelCheck(server: SharedServer, now: number): number {
-	const { state } = describeServer(server);
-	if (state === 'hibernating') {
-		return now + HIBERNATING_RECHECK_MS;
+// When a pinned panel should next look at its server, or null once it's hibernating and controller's push will say when it wakes
+export function nextPanelCheck(server: SharedServer, now: number): number | null {
+	if (describeServer(server).state === 'hibernating') {
+		return null;
 	}
-	if (state === 'saving') {
-		return now + SAVING_RECHECK_MS;
-	}
-	let expires = NaN;
-	if (server.jit_expires_date) {
-		expires = Date.parse(server.jit_expires_date);
-	}
-	if (!Number.isFinite(expires)) {
-		return now + LIVE_RECHECK_MS;
-	}
-	if (expires + EXPIRY_GRACE_MS <= now) {
-		return now + STALE_EXPIRY_RECHECK_MS;
-	}
-	return Math.max(expires + EXPIRY_GRACE_MS, now + MINUTE_MS);
+	return now + AWAKE_RECHECK_MS;
 }

@@ -26,6 +26,8 @@ export interface Env {
 	NODECRAFT_OAUTH_SCOPE: string;
 	NODECRAFT_CLIENT_ID: string;
 	NODECRAFT_CLIENT_SECRET: string;
+	// bearer token controller sends with Lite state pushes to /lite/updates
+	CONTROLLER_PUSH_SECRET: string;
 
 	// base64 AES-256 key for secrets we store, such as remembered share passwords
 	CARD_ENCRYPTION_KEY: string;

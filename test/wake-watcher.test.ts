@@ -46,6 +46,44 @@ describe('WakeWatcher cleanup', () => {
 		});
 	});
 
+	it('ignores pushes for shares it has nothing to show on, so they never create storage', async () => {
+		const stub = env.WAKE_WATCHER.getByName('unwatched-share');
+		await stub.changed();
+		await runInDurableObject(stub, async (_instance, state) => {
+			const stored = await state.storage.list();
+			expect(stored.size).toBe(0);
+			expect(await state.storage.getAlarm()).toBeNull();
+		});
+	});
+
+	it('brings a panel check forward on a push, but no sooner than the refresh cooldown allows', async () => {
+		const stub = env.WAKE_WATCHER.getByName('pushed-share');
+		const fetchedAt = Date.now();
+		await runInDurableObject(stub, async (_instance, state) => {
+			await state.storage.put('panels', { card: { channelId: '1', messageId: '2' } });
+			await state.storage.put('snapshot', { at: fetchedAt });
+			await state.storage.setAlarm(Date.now() + (2 * HOUR_MS));
+		});
+		await stub.changed();
+		await runInDurableObject(stub, async (_instance, state) => {
+			expect(await state.storage.getAlarm()).toBe(fetchedAt + 15000);
+		});
+	});
+
+	it('keeps an earlier check when a push arrives', async () => {
+		const stub = env.WAKE_WATCHER.getByName('soon-share');
+		const soon = Date.now() + 5000;
+		await runInDurableObject(stub, async (_instance, state) => {
+			await state.storage.put('panels', { card: { channelId: '1', messageId: '2' } });
+			await state.storage.put('snapshot', { at: Date.now() });
+			await state.storage.setAlarm(soon);
+		});
+		await stub.changed();
+		await runInDurableObject(stub, async (_instance, state) => {
+			expect(await state.storage.getAlarm()).toBe(soon);
+		});
+	});
+
 	it('schedules cleanup when the last panel is removed', async () => {
 		const stub = env.WAKE_WATCHER.getByName('last-panel-share');
 		await runInDurableObject(stub, async (_instance, state) => {

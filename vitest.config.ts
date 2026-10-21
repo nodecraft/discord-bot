@@ -16,6 +16,7 @@ export default defineConfig({
 					NODECRAFT_CLIENT_ID: 'test-client',
 					NODECRAFT_CLIENT_SECRET: 'test-secret',
 					CARD_ENCRYPTION_KEY: 'xObs8kTzjYwKqXzHc2naQ/q992wDGrnJtUlndSlRl4Q=',
+					CONTROLLER_PUSH_SECRET: 'test-push-secret',
 				},
 			},
 		}),
