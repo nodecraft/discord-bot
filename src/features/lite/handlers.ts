@@ -2,6 +2,7 @@ import {
 	ApplicationCommandOptionType,
 	ComponentType,
 	InteractionResponseType,
+	MessageFlags,
 	TextInputStyle,
 } from 'discord-api-types/v10';
 
@@ -29,6 +30,7 @@ import { deferredMessage, deferredUpdate, ephemeralMessage } from '../../discord
 import {
 	DiscordApiError,
 	createChannelMessage,
+	createFollowup,
 	deleteChannelMessage,
 	editOriginalResponse,
 	getChannelMessage,
@@ -217,7 +219,8 @@ async function runWake(ctx: InteractionContext, interaction: TokenInteraction, c
 		return;
 	}
 
-	let note = result.message;
+	let note: string | undefined = result.message;
+	let privateNote: string | undefined;
 	if (result.passwordError) {
 		if (card.password_mode === 'none') {
 			await withDB(ctx.env, db => switchToAsk(db, card.id));
@@ -226,14 +229,20 @@ async function runWake(ctx: InteractionContext, interaction: TokenInteraction, c
 			// controller reports rate limits as a wrong password, so keep the saved one rather than discard it
 			note = 'The saved password didn\'t work. If this keeps happening, post the share link again.';
 		} else {
-			note = 'Wrong password, or too many tries. Wait a few minutes and try again.';
+			// only the person who typed it needs to know, so the shared card isn't marked for the whole channel
+			note = undefined;
+			privateNote = 'Wrong password, or too many tries. Wait a few minutes and try again.';
 		}
 	}
 
 	if (result.server && !UNUSABLE_LINK_CODES.has(result.code)) {
 		await editOriginalResponse(ctx.env, token, renderCard(result.server, { cardId: card.id, note, layout: layoutOf(card), game: result.game }));
 	} else {
-		await editOriginalResponse(ctx.env, token, renderNotice(note, card.id));
+		await editOriginalResponse(ctx.env, token, renderNotice(note ?? result.message, card.id));
+	}
+	// sent after the edit, since a followup to a still-deferred reply would replace it and lose the ephemeral flag
+	if (privateNote) {
+		await createFollowup(ctx.env, token, { content: privateNote, flags: MessageFlags.Ephemeral });
 	}
 }
 
@@ -313,7 +322,12 @@ async function postShareCard(
 	}
 	await watcher(ctx.env, shareId).unwatchPanel(previousPanel.id).catch(() => {});
 	if (previousPanel.message_id) {
-		await deleteChannelMessage(ctx.env, channelId, previousPanel.message_id).catch(() => {});
+		// the new panel is already up, so a failed delete shouldn't fail the post, but it leaves a stale copy that refreshes as a plain card
+		await deleteChannelMessage(ctx.env, channelId, previousPanel.message_id).catch((err: unknown) => {
+			if (!(err instanceof DiscordApiError && err.status === 404)) {
+				console.error('Failed to delete replaced Lite panel', previousPanel.id, err);
+			}
+		});
 	}
 	await editOriginalResponse(ctx.env, interaction.token, { content: 'Panel posted. It replaces this server\'s earlier panel in this channel.' });
 }

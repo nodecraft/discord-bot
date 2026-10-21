@@ -78,6 +78,12 @@ export function describeServer(server: SharedServer, game?: GameArt | null): Ser
 	return { state: 'offline', action: 'start', joinAddress: null, note: null };
 }
 
+// an idle server reaches ready_to_store while still online, often before anyone has had a chance to join after a wake
+export function isServerUp(server: SharedServer): boolean {
+	const state = describeServer(server).state;
+	return state === 'online' || (state === 'hibernating_soon' && server.status === 'online');
+}
+
 // controller pushes every JIT step, but player counts never reach the bot that way, and a push can beat the heartbeat cache
 const AWAKE_RECHECK_MS = 10 * 60000;
 

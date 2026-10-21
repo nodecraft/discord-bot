@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { findCardId, renderCard, renderNotice } from '../src/features/lite/cards.ts';
 import { findShareId, findShareIdInMessage, parseShareInput } from '../src/features/lite/share-link.ts';
-import { describeServer, nextPanelCheck } from '../src/features/lite/status.ts';
+import { describeServer, isServerUp, nextPanelCheck } from '../src/features/lite/status.ts';
 import { decryptSecret, encryptSecret } from '../src/lib/crypto.ts';
 
 import type { SharedServer } from '../src/features/lite/api.ts';
@@ -139,6 +139,16 @@ describe('secret encryption', () => {
 	it('refuses to decrypt a ciphertext moved to another card', async () => {
 		const sealed = await encryptSecret(env.CARD_ENCRYPTION_KEY, 'hunter2', 'card-1');
 		await expect(decryptSecret(env.CARD_ENCRYPTION_KEY, sealed, 'card-2')).rejects.toThrow();
+	});
+});
+
+describe('isServerUp', () => {
+	it('treats a freshly woken server that is already counting down to hibernation as up', () => {
+		expect(isServerUp(server({ jit_status: 'ready_to_store', status: 'online' }))).toBe(true);
+	});
+
+	it('does not treat a stopped server counting down to hibernation as up', () => {
+		expect(isServerUp(server({ jit_status: 'ready_to_store', status: 'offline' }))).toBe(false);
 	});
 });
 

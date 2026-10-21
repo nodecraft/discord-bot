@@ -4,7 +4,7 @@ import { getSharedServer, startSharedServer } from './api.ts';
 import { renderCard, renderNotice } from './cards.ts';
 import { errorMessage, isPasswordError, isUnusableLink } from './errors.ts';
 import { gameArt } from './games.ts';
-import { describeServer, nextPanelCheck } from './status.ts';
+import { describeServer, isServerUp, nextPanelCheck } from './status.ts';
 import { retirePanels } from './store.ts';
 import {
 	DiscordApiError,
@@ -347,7 +347,7 @@ export class WakeWatcher extends DurableObject<Env> {
 		await this.ctx.storage.put('snapshot', { server, game: state.game, at: state.updatedAt });
 		const view = describeServer(server, state.game);
 
-		if (view.state === 'online') {
+		if (isServerUp(server)) {
 			await this.renderAll(state, (cardId, layout) => this.restingCard(state, cardId, layout));
 			// finish first, so an alarm that fires twice doesn't ping everyone twice
 			await this.finishWake(server);
@@ -455,7 +455,19 @@ export class WakeWatcher extends DurableObject<Env> {
 			}));
 			return { ok: true, outcome: 'over_budget', module: server.module };
 		}
+		let progress: WakeState['progress'] = 'starting';
+		if (view.action === 'wake' || view.state === 'waking') {
+			progress = 'waking';
+		}
+		const now = Date.now();
 		if (view.action) {
+			// controller's start can take several seconds while it picks a node, so the clicker sees the wake begin first
+			await this.edit(request.cardId, target, renderCard(server, {
+				cardId: request.cardId,
+				layout: layoutFor(target),
+				game,
+				progress: { state: progress, since: now },
+			}));
 			try {
 				await startSharedServer(client, request.shareId, request.password, `discord:${request.userId}`);
 			} catch (err) {
@@ -463,11 +475,6 @@ export class WakeWatcher extends DurableObject<Env> {
 			}
 		}
 
-		let progress: WakeState['progress'] = 'starting';
-		if (view.action === 'wake' || view.state === 'waking') {
-			progress = 'waking';
-		}
-		const now = Date.now();
 		const state: WakeState = {
 			shareId: request.shareId,
 			startedAt: now,
