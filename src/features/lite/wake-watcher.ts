@@ -265,12 +265,7 @@ export class WakeWatcher extends DurableObject<Env> {
 			await this.scheduleCleanup();
 			return;
 		}
-		const next = nextPanelCheck(server, Date.now());
-		if (next === null) {
-			await this.ctx.storage.deleteAlarm();
-		} else {
-			await this.ctx.storage.setAlarm(next);
-		}
+		await this.ctx.storage.setAlarm(nextPanelCheck(server, Date.now()));
 	}
 
 	private async takeWakeBudget(): Promise<boolean> {

@@ -84,12 +84,14 @@ const LIVE_RECHECK_MS = 10 * MINUTE_MS;
 const SAVING_RECHECK_MS = 2 * MINUTE_MS;
 // an expiry already in the past (a locked server the idle scan skips, or a slow scan) would otherwise mean a check every minute forever
 const STALE_EXPIRY_RECHECK_MS = 5 * MINUTE_MS;
+// wakes from nodepanel or the dashboard never reach the bot, so a slow check keeps hibernating panels from going stale
+const HIBERNATING_RECHECK_MS = 120 * MINUTE_MS;
 
-// When a pinned panel should next look at its server, or null once it's hibernating and only a click can change it
-export function nextPanelCheck(server: SharedServer, now: number): number | null {
+// When a pinned panel should next look at its server
+export function nextPanelCheck(server: SharedServer, now: number): number {
 	const { state } = describeServer(server);
 	if (state === 'hibernating') {
-		return null;
+		return now + HIBERNATING_RECHECK_MS;
 	}
 	if (state === 'saving') {
 		return now + SAVING_RECHECK_MS;

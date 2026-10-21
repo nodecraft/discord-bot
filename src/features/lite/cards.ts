@@ -34,6 +34,10 @@ const JOINABLE_STATES: Set<ServerState> = new Set(['online', 'starting', 'hibern
 const DISCORD_URL = /^https:\/\/discord\.(?:com|gg)\//;
 const HTTPS_URL = /^https:\/\//;
 
+// Braille blank survives Discord's whitespace trimming; a wrapped line of it on mobile sits beside the taller thumbnail for free
+const BLANK = '⠀';
+const MIN_SUBTITLE_LENGTH = 56;
+
 export interface CardMessage {
 	flags: number;
 	components: APIMessageTopLevelComponent[];
@@ -73,13 +77,14 @@ function header(title: string, game: GameArt | null | undefined): APIComponentIn
 	if (game) {
 		subtitle = `${escapeMarkdown(game.name)} · Nodecraft Lite`;
 	}
-	const text = { type: ComponentType.TextDisplay, content: `### ${escapeMarkdown(title)}\n-# ${subtitle}` } as const;
 	if (!game?.icon) {
-		return text;
+		return { type: ComponentType.TextDisplay, content: `### ${escapeMarkdown(title)}\n-# ${subtitle}` };
 	}
+	// containers shrink to their text, so a short server name leaves the thumbnail towering over a narrow card
+	const padded = subtitle.padEnd(MIN_SUBTITLE_LENGTH, BLANK);
 	return {
 		type: ComponentType.Section,
-		components: [text],
+		components: [{ type: ComponentType.TextDisplay, content: `### ${escapeMarkdown(title)}\n-# ${padded}` }],
 		accessory: { type: ComponentType.Thumbnail, media: { url: game.icon }, description: game.name },
 	};
 }
@@ -105,7 +110,7 @@ function track(current: ServerState): string {
 		}
 		return display.emoji;
 	});
-	return `-# ${steps.join(' ─ ')}`;
+	return steps.join(' ─ ');
 }
 
 function refreshButton(cardId: string, disabled: boolean): APIButtonComponent {
@@ -147,13 +152,15 @@ export function renderCard(server: SharedServer, options: CardOptions): CardMess
 	children.push(header(server.name, options.game));
 	children.push({ type: ComponentType.Separator, divider: true, spacing: SeparatorSpacingSize.Small });
 
-	const status = [`${display.emoji} **${display.label}**${playersText(server, state)}`];
+	// the track already names the current step, so it replaces the headline rather than repeating it
+	let headline = `${display.emoji} **${display.label}**${playersText(server, state)}`;
+	if (options.progress) {
+		headline = track(state);
+	}
+	const status = [headline];
 	if (view.joinAddress && JOINABLE_STATES.has(state)) {
 		// a code block gets Discord's copy button on desktop
 		status.push(`\`\`\`\n${view.joinAddress}\n\`\`\``);
-	}
-	if (options.progress) {
-		status.push(track(state));
 	}
 	if (note) {
 		status.push(`-# ${note}`);

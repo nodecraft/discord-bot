@@ -110,6 +110,14 @@ describe('renderCard', () => {
 		expect(buttons).not.toContain('lite:wake:card-1');
 	});
 
+	it('names the current step once while a wake is in progress', () => {
+		const card = JSON.stringify(renderCard(server({ jit_status: 'stored', status: 'offline' }), {
+			cardId: 'card-1',
+			progress: { state: 'waking', since: Date.now() },
+		}));
+		expect(card.match(/Waking/g)).toHaveLength(1);
+	});
+
 	it('only reports players for a server that is online', () => {
 		expect(JSON.stringify(renderCard(server({ players: 3 }), { cardId: 'card-1' }))).toContain('3 players');
 		expect(JSON.stringify(renderCard(server({ players: 3, jit_status: 'stored', status: 'offline' }), { cardId: 'card-1' }))).not.toContain('players');
@@ -131,8 +139,8 @@ describe('secret encryption', () => {
 describe('nextPanelCheck', () => {
 	const now = Date.parse('2026-10-20T12:00:00Z');
 
-	it('stops checking once the server is hibernating, since only a click can change it', () => {
-		expect(nextPanelCheck(server({ jit_status: 'stored', status: 'offline' }), now)).toBeNull();
+	it('keeps checking a hibernating server every 2 hours to catch wakes from outside Discord', () => {
+		expect(nextPanelCheck(server({ jit_status: 'stored', status: 'offline' }), now)).toBe(now + 7_200_000);
 	});
 
 	it('aims just past the expiry, which is when controller moves an idle server toward hibernation', () => {
