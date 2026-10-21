@@ -18,10 +18,11 @@ import { gameArt } from './games.ts';
 import { findShareIdInMessage, parseShareInput } from './share-link.ts';
 import {
 	cardPassword,
-	countOtherPanels,
 	createCard,
 	getCard,
+	otherPanels,
 	promoteToPanel,
+	retirePanels,
 	switchToAsk,
 } from './store.ts';
 import { deferredMessage, deferredUpdate, ephemeralMessage } from '../../discord/responses.ts';
@@ -30,6 +31,7 @@ import {
 	createChannelMessage,
 	deleteChannelMessage,
 	editOriginalResponse,
+	getChannelMessage,
 } from '../../discord/rest.ts';
 import { customId, interactionUserId, isInstalledInGuild } from '../../discord/types.ts';
 import { trackEvent, trackTechnical } from '../../lib/analytics.ts';
@@ -114,15 +116,49 @@ function runInBackground(ctx: InteractionContext, task: string, token: string, w
 const MAX_PANELS_PER_GUILD = 5;
 const MAX_PANELS_PER_SHARE = 10;
 
-async function panelLimitMessage(env: Env, guildId: string, shareId: string, channelId: string): Promise<string | null> {
-	const panels = await withDB(env, db => countOtherPanels(db, { guildId, shareId, channelId }));
-	if (panels.guild >= MAX_PANELS_PER_GUILD) {
+function capMessage(panels: LiteCard[], guildId: string, shareId: string): string | null {
+	if (panels.filter(panel => panel.guild_id === guildId).length >= MAX_PANELS_PER_GUILD) {
 		return `This Discord server already has ${MAX_PANELS_PER_GUILD} Lite panels. Delete one to make room for this one.`;
 	}
-	if (panels.share >= MAX_PANELS_PER_SHARE) {
+	if (panels.filter(panel => panel.share_id === shareId).length >= MAX_PANELS_PER_SHARE) {
 		return `This server is already pinned as a panel in ${MAX_PANELS_PER_SHARE} channels. Post a regular card instead by leaving out \`panel\`.`;
 	}
 	return null;
+}
+
+// Discord never tells us when a panel's message or channel is deleted, so they're checked before anyone is turned away
+async function deletedPanelIds(env: Env, panels: LiteCard[]): Promise<string[]> {
+	const deleted = await Promise.all(panels.map(async (panel) => {
+		if (!panel.message_id) {
+			return true;
+		}
+		try {
+			await getChannelMessage(env, panel.channel_id, panel.message_id);
+			return false;
+		} catch (err) {
+			if (err instanceof DiscordApiError && (err.status === 404 || err.status === 403)) {
+				return true;
+			}
+			// a flaky check shouldn't free a slot for a panel that might still be there
+			console.error('Failed to check Lite panel', panel.id, err);
+			return false;
+		}
+	}));
+	return panels.filter((_, index) => deleted[index]).map(panel => panel.id);
+}
+
+async function panelLimitMessage(env: Env, guildId: string, shareId: string, channelId: string): Promise<string | null> {
+	const panels = await withDB(env, db => otherPanels(db, { guildId, shareId, channelId }));
+	const message = capMessage(panels, guildId, shareId);
+	if (!message) {
+		return null;
+	}
+	const deleted = await deletedPanelIds(env, panels);
+	if (deleted.length === 0) {
+		return message;
+	}
+	await withDB(env, db => retirePanels(db, deleted));
+	return capMessage(panels.filter(panel => !deleted.includes(panel.id)), guildId, shareId);
 }
 
 function layoutOf(card: LiteCard) {

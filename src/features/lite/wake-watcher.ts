@@ -326,8 +326,8 @@ export class WakeWatcher extends DurableObject<Env> {
 		} catch (err) {
 			if (isUnusableLink(err)) {
 				await this.renderAll(state, cardId => renderNotice(errorMessage(err), cardId));
+				// panels stay registered like in checkPanels, so the database still matches and a fixed link brings them back
 				await this.ctx.storage.delete('wake');
-				await this.ctx.storage.delete('panels');
 				await this.scheduleCleanup();
 				this.trackFinish(state, 'link_unusable');
 				return;

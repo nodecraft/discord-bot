@@ -1,7 +1,6 @@
 import { discordBotLiteCards } from '@nodecraft/db/nodepanel/schemas';
 import {
 	and,
-	count,
 	eq,
 	inArray,
 	ne,
@@ -88,15 +87,13 @@ export async function promoteToPanel(db: Database, { id, shareId, channelId, mes
 	});
 }
 
-// leaves out the panel a new one would replace, since reposting it doesn't add to the caps
-export async function countOtherPanels(db: Database, { guildId, shareId, channelId }: { guildId: string; shareId: string; channelId: string; }) {
-	const notReplaced = or(ne(discordBotLiteCards.channel_id, channelId), ne(discordBotLiteCards.share_id, shareId));
-	const others = and(eq(discordBotLiteCards.is_panel, true), notReplaced);
-	const [inGuild] = await db.select({ value: count() }).from(discordBotLiteCards)
-		.where(and(others, eq(discordBotLiteCards.guild_id, guildId)));
-	const [forShare] = await db.select({ value: count() }).from(discordBotLiteCards)
-		.where(and(others, eq(discordBotLiteCards.share_id, shareId)));
-	return { guild: inGuild?.value ?? 0, share: forShare?.value ?? 0 };
+// the panels counting toward this guild's or share's caps, leaving out the one a new panel would replace since reposting doesn't add to them
+export async function otherPanels(db: Database, { guildId, shareId, channelId }: { guildId: string; shareId: string; channelId: string; }): Promise<LiteCard[]> {
+	return db.select().from(discordBotLiteCards).where(and(
+		eq(discordBotLiteCards.is_panel, true),
+		or(ne(discordBotLiteCards.channel_id, channelId), ne(discordBotLiteCards.share_id, shareId)),
+		or(eq(discordBotLiteCards.guild_id, guildId), eq(discordBotLiteCards.share_id, shareId)),
+	));
 }
 
 // a panel whose message is gone stops counting toward the panel caps

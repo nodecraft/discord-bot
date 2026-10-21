@@ -26,7 +26,7 @@ export class DiscordApiError extends Error {
 }
 
 interface DiscordRequest {
-	method: 'DELETE' | 'PATCH' | 'POST' | 'PUT';
+	method: 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT';
 	path: string;
 	body?: unknown;
 	botToken?: string;
@@ -88,6 +88,14 @@ export function createChannelMessage(env: Env, channelId: string, body: RESTPost
 		method: 'POST',
 		path: `/channels/${channelId}/messages`,
 		body,
+		botToken: env.DISCORD_BOT_TOKEN,
+	});
+}
+
+export function getChannelMessage(env: Env, channelId: string, messageId: string) {
+	return discordFetch<unknown>({
+		method: 'GET',
+		path: `/channels/${channelId}/messages/${messageId}`,
 		botToken: env.DISCORD_BOT_TOKEN,
 	});
 }
