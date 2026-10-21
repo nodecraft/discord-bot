@@ -32,7 +32,7 @@ export const liteSubcommands: APIApplicationCommandSubcommandOption[] = [
 			{
 				type: ApplicationCommandOptionType.Boolean,
 				name: SHARE_OPTIONS.panel,
-				description: 'Pin as this channel\'s status panel (Nodecraft must be added to this server)',
+				description: 'Pin as a status panel in this channel (Nodecraft must be added to this server)',
 			},
 		],
 	},

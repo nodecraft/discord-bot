@@ -5,6 +5,7 @@ import {
 	eq,
 	inArray,
 	ne,
+	or,
 } from 'drizzle-orm';
 
 import { CURRENT_KEY_VERSION, decryptSecret, encryptSecret } from '../../lib/crypto.ts';
@@ -68,13 +69,14 @@ export async function switchToAsk(db: Database, id: string): Promise<void> {
 		.where(eq(discordBotLiteCards.id, id));
 }
 
-// a channel holds one panel, so the old one is retired before this card takes its place; returns it so its message can be cleaned up
-export async function promoteToPanel(db: Database, { id, channelId, messageId }: { id: string; channelId: string; messageId: string; }): Promise<LiteCard | null> {
+// a channel holds one panel per server, so reposting retires the old one instead of stacking a stale copy; returns it so its message can be cleaned up
+export async function promoteToPanel(db: Database, { id, shareId, channelId, messageId }: { id: string; shareId: string; channelId: string; messageId: string; }): Promise<LiteCard | null> {
 	return db.transaction(async (tx) => {
 		const [existing] = await tx.update(discordBotLiteCards)
 			.set({ is_panel: false })
 			.where(and(
 				eq(discordBotLiteCards.channel_id, channelId),
+				eq(discordBotLiteCards.share_id, shareId),
 				eq(discordBotLiteCards.is_panel, true),
 				ne(discordBotLiteCards.id, id),
 			))
@@ -86,13 +88,14 @@ export async function promoteToPanel(db: Database, { id, channelId, messageId }:
 	});
 }
 
-// panels other than this channel's, which a new panel here would replace rather than add to
+// leaves out the panel a new one would replace, since reposting it doesn't add to the caps
 export async function countOtherPanels(db: Database, { guildId, shareId, channelId }: { guildId: string; shareId: string; channelId: string; }) {
-	const otherChannel = and(eq(discordBotLiteCards.is_panel, true), ne(discordBotLiteCards.channel_id, channelId));
+	const notReplaced = or(ne(discordBotLiteCards.channel_id, channelId), ne(discordBotLiteCards.share_id, shareId));
+	const others = and(eq(discordBotLiteCards.is_panel, true), notReplaced);
 	const [inGuild] = await db.select({ value: count() }).from(discordBotLiteCards)
-		.where(and(otherChannel, eq(discordBotLiteCards.guild_id, guildId)));
+		.where(and(others, eq(discordBotLiteCards.guild_id, guildId)));
 	const [forShare] = await db.select({ value: count() }).from(discordBotLiteCards)
-		.where(and(otherChannel, eq(discordBotLiteCards.share_id, shareId)));
+		.where(and(others, eq(discordBotLiteCards.share_id, shareId)));
 	return { guild: inGuild?.value ?? 0, share: forShare?.value ?? 0 };
 }
 

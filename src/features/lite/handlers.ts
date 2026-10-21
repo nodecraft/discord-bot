@@ -117,7 +117,7 @@ const MAX_PANELS_PER_SHARE = 10;
 async function panelLimitMessage(env: Env, guildId: string, shareId: string, channelId: string): Promise<string | null> {
 	const panels = await withDB(env, db => countOtherPanels(db, { guildId, shareId, channelId }));
 	if (panels.guild >= MAX_PANELS_PER_GUILD) {
-		return `This Discord server already has ${MAX_PANELS_PER_GUILD} Lite panels. Delete one, or post this one in a channel that already has a panel to replace it.`;
+		return `This Discord server already has ${MAX_PANELS_PER_GUILD} Lite panels. Delete one to make room for this one.`;
 	}
 	if (panels.share >= MAX_PANELS_PER_SHARE) {
 		return `This server is already pinned as a panel in ${MAX_PANELS_PER_SHARE} channels. Post a regular card instead by leaving out \`panel\`.`;
@@ -269,15 +269,17 @@ async function postShareCard(
 	}
 	track('posted', server);
 	// the card only becomes a panel once its message exists, so a failed post never counts toward the caps or replaces the existing one
-	const previousPanel = await withDB(ctx.env, db => promoteToPanel(db, { id: card.id, channelId, messageId }));
+	const previousPanel = await withDB(ctx.env, db => promoteToPanel(db, { id: card.id, shareId, channelId, messageId }));
 	await watcher(ctx.env, shareId).watchPanel({ cardId: card.id, message: { channelId, messageId }, server, game });
-	if (previousPanel) {
-		await watcher(ctx.env, previousPanel.share_id).unwatchPanel(previousPanel.id).catch(() => {});
-		if (previousPanel.message_id) {
-			await deleteChannelMessage(ctx.env, channelId, previousPanel.message_id).catch(() => {});
-		}
+	if (!previousPanel) {
+		await editOriginalResponse(ctx.env, interaction.token, { content: 'Panel posted.' });
+		return;
 	}
-	await editOriginalResponse(ctx.env, interaction.token, { content: 'Panel posted. It replaces any earlier panel in this channel.' });
+	await watcher(ctx.env, shareId).unwatchPanel(previousPanel.id).catch(() => {});
+	if (previousPanel.message_id) {
+		await deleteChannelMessage(ctx.env, channelId, previousPanel.message_id).catch(() => {});
+	}
+	await editOriginalResponse(ctx.env, interaction.token, { content: 'Panel posted. It replaces this server\'s earlier panel in this channel.' });
 }
 
 export const shareCommand: SubcommandHandler = (interaction, ctx) => {
