@@ -15,6 +15,7 @@ interface CmsGame {
 		shortTitle?: string;
 		icon?: StoryblokAsset;
 		banner?: StoryblokAsset;
+		join_features?: string[];
 	};
 }
 
@@ -22,9 +23,11 @@ export interface GameArt {
 	name: string;
 	icon: string | null;
 	banner: string | null;
+	// optional because panel snapshots stored before this field existed won't have it
+	joinFeatures?: string[];
 }
 
-const CACHE_KEY = 'lite:games:v1';
+const CACHE_KEY = 'lite:games:v2';
 // the game list changes rarely and its payload is large, so one fetch serves every card for hours
 const CACHE_TTL_SECONDS = 6 * 60 * 60;
 
@@ -58,6 +61,7 @@ async function loadCatalog(client: ControllerClient): Promise<Record<string, Gam
 			name: game.content?.shortTitle || game.name,
 			icon: imageUrl(game.content?.icon, 256, 256),
 			banner: imageUrl(game.content?.banner, 1200, 400),
+			joinFeatures: game.content?.join_features ?? [],
 		};
 	}
 	return catalog;

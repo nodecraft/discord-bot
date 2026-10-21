@@ -345,7 +345,7 @@ export class WakeWatcher extends DurableObject<Env> {
 		state.server = server;
 		state.updatedAt = Date.now();
 		await this.ctx.storage.put('snapshot', { server, game: state.game, at: state.updatedAt });
-		const view = describeServer(server);
+		const view = describeServer(server, state.game);
 
 		if (view.state === 'online') {
 			await this.renderAll(state, (cardId, layout) => this.restingCard(state, cardId, layout));

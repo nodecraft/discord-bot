@@ -1,4 +1,5 @@
 import type { SharedServer } from './api.ts';
+import type { GameArt } from './games.ts';
 
 export type ServerState =
 	| 'hibernating'
@@ -19,14 +20,15 @@ export interface ServerView {
 	note: string | null;
 }
 
-function joinAddress(server: SharedServer): string | null {
+function joinAddress(server: SharedServer, game: GameArt | null | undefined): string | null {
 	const network = server.network;
 	if (!network) {
 		return null;
 	}
-	// a Lite server's IP can change on wake, so prefer the DNS name when there is one
+	// a Lite server's IP can change on wake, so prefer the DNS name unless the game can't join by hostname, matching nodepanel's shared page
+	const dnsUnsupported = game?.joinFeatures && !game.joinFeatures.includes('dns');
 	let host = network.address;
-	if (network.hostname && network.domain) {
+	if (network.hostname && network.domain && !dnsUnsupported) {
 		host = `${network.hostname}.${network.domain}`;
 	}
 	if (!host) {
@@ -39,8 +41,8 @@ function joinAddress(server: SharedServer): string | null {
 }
 
 // Mirrors nodepanel's Lite labels (assets/entrypoints/shared/shared.ts) so users see the same words everywhere
-export function describeServer(server: SharedServer): ServerView {
-	const address = joinAddress(server);
+export function describeServer(server: SharedServer, game?: GameArt | null): ServerView {
+	const address = joinAddress(server, game);
 
 	if (server.jit_status === 'storing') {
 		return { state: 'saving', action: null, joinAddress: null, note: 'Saving to hibernate. Try again in a few minutes.' };

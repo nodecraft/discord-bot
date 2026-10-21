@@ -70,6 +70,12 @@ describe('describeServer', () => {
 		expect(describeServer(server({})).joinAddress).toBe('mysurvival.nodecraft.gg:25565');
 	});
 
+	it('shows the IP for games that cannot join by hostname', () => {
+		const game = { name: 'Rust', icon: null, banner: null, joinFeatures: ['ip'] };
+		expect(describeServer(server({}), game).joinAddress).toBe('203.0.113.10:25565');
+		expect(describeServer(server({}), { ...game, joinFeatures: ['ip', 'dns'] }).joinAddress).toBe('mysurvival.nodecraft.gg:25565');
+	});
+
 	it('has nothing to press while saving to hibernate', () => {
 		expect(describeServer(server({ jit_status: 'storing', status: 'offline' }))).toMatchObject({ state: 'saving', action: null });
 	});

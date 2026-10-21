@@ -134,7 +134,7 @@ function footer(updatedAt: number, layout: CardOptions['layout']): APIComponentI
 }
 
 export function renderCard(server: SharedServer, options: CardOptions): CardMessage {
-	const view = describeServer(server);
+	const view = describeServer(server, options.game);
 	let state = view.state;
 	let action = view.action;
 	let note = options.note ?? view.note;
