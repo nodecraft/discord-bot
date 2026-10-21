@@ -3,7 +3,9 @@ import { matchedRoutes, routePath } from 'hono/route';
 
 import { handleInteraction, interactionAction } from './discord/router.ts';
 import { verifyDiscordRequest } from './discord/verify.ts';
+import { parseShareInput } from './features/lite/share-link.ts';
 import { trackTechnical } from './lib/analytics.ts';
+import { secretsMatch } from './lib/crypto.ts';
 
 import type { Env } from './env.ts';
 import type { APIInteraction } from 'discord-api-types/v10';
@@ -72,6 +74,26 @@ app.post('/interactions', async (context) => {
 	});
 	context.set('outcome', outcome);
 	return context.json(response);
+});
+
+// controller pushes here when a shared server changes state, so panels don't wait on their next timed check
+app.post('/lite/updates', async (context) => {
+	const token = context.req.header('authorization')?.replace(/^Bearer /, '');
+	if (!(await secretsMatch(token, context.env.CONTROLLER_PUSH_SECRET))) {
+		context.set('outcome', 'bad_secret');
+		return context.text('Unauthorized', 401);
+	}
+	const body = await context.req.json<{ share_id?: unknown; }>().catch(() => null);
+	let shareId: string | null = null;
+	if (typeof body?.share_id === 'string') {
+		shareId = parseShareInput(body.share_id);
+	}
+	if (!shareId) {
+		context.set('outcome', 'bad_share_id');
+		return context.text('Expected a share_id', 400);
+	}
+	await context.env.WAKE_WATCHER.getByName(shareId).changed();
+	return context.body(null, 202);
 });
 
 // discord.nodecraft.com has always redirected to the community server, and links to it are published (nodepanel support)

@@ -110,6 +110,14 @@ describe('renderCard', () => {
 		expect(buttons).not.toContain('lite:wake:card-1');
 	});
 
+	it('names the current step once while a wake is in progress', () => {
+		const card = JSON.stringify(renderCard(server({ jit_status: 'stored', status: 'offline' }), {
+			cardId: 'card-1',
+			progress: { state: 'waking', since: Date.now() },
+		}));
+		expect(card.match(/Waking/g)).toHaveLength(1);
+	});
+
 	it('only reports players for a server that is online', () => {
 		expect(JSON.stringify(renderCard(server({ players: 3 }), { cardId: 'card-1' }))).toContain('3 players');
 		expect(JSON.stringify(renderCard(server({ players: 3, jit_status: 'stored', status: 'offline' }), { cardId: 'card-1' }))).not.toContain('players');
@@ -131,24 +139,12 @@ describe('secret encryption', () => {
 describe('nextPanelCheck', () => {
 	const now = Date.parse('2026-10-20T12:00:00Z');
 
-	it('stops checking once the server is hibernating, since only a click can change it', () => {
+	it('stops checking once the server is hibernating, since controller pushes the next change', () => {
 		expect(nextPanelCheck(server({ jit_status: 'stored', status: 'offline' }), now)).toBeNull();
 	});
 
-	it('aims just past the expiry, which is when controller moves an idle server toward hibernation', () => {
-		const expires = '2026-10-20T12:20:00Z';
-		expect(nextPanelCheck(server({ jit_status: 'hot', jit_expires_date: expires }), now)).toBe(Date.parse(expires) + 30000);
-	});
-
-	it('backs off to every 5 minutes when the expiry is stale, such as a locked server the idle scan skips', () => {
-		expect(nextPanelCheck(server({ jit_status: 'ready_to_store', jit_expires_date: '2026-10-20T11:00:00Z' }), now)).toBe(now + 300000);
-	});
-
-	it('waits at least a minute even when the expiry is moments away', () => {
-		expect(nextPanelCheck(server({ jit_status: 'hot', jit_expires_date: '2026-10-20T12:00:05Z' }), now)).toBe(now + 60000);
-	});
-
-	it('checks in every 10 minutes while players keep a server live', () => {
+	it('checks in every 10 minutes while awake, since player counts are never pushed', () => {
 		expect(nextPanelCheck(server({ jit_status: 'live', jit_expires_date: null }), now)).toBe(now + 600000);
+		expect(nextPanelCheck(server({ jit_status: 'hot', jit_expires_date: '2026-10-20T12:20:00Z' }), now)).toBe(now + 600000);
 	});
 });

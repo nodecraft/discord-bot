@@ -512,6 +512,22 @@ export class WakeWatcher extends DurableObject<Env> {
 		}
 	}
 
+	// a burst of changes (waking, live, hot) shares one check, and the cooldown caps how often pushes can reach controller
+	private async checkSoon(): Promise<void> {
+		if (!(await this.loadWake()) && Object.keys(await this.panels()).length === 0) {
+			return;
+		}
+		const snapshot = await this.ctx.storage.get<Snapshot>('snapshot');
+		let at = Date.now();
+		if (snapshot) {
+			at = Math.max(at, snapshot.at + REFRESH_COOLDOWN_MS);
+		}
+		const scheduled = await this.ctx.storage.getAlarm();
+		if (scheduled === null || at < scheduled) {
+			await this.ctx.storage.setAlarm(at);
+		}
+	}
+
 	private async runAlarm(): Promise<AlarmJob> {
 		// an operator kill switch: each watcher stops at its next alarm instead of rescheduling
 		if (this.env.LITE_BACKGROUND_UPDATES === 'off') {
@@ -544,6 +560,11 @@ export class WakeWatcher extends DurableObject<Env> {
 
 	refresh(request: RefreshRequest): Promise<void> {
 		return this.exclusive(() => this.refreshCard(request));
+	}
+
+	// controller calls this through /lite/updates whenever the share's server changes state
+	changed(): Promise<void> {
+		return this.exclusive(() => this.checkSoon());
 	}
 
 	alarm(): Promise<void> {
