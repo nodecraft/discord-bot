@@ -21,10 +21,8 @@ import {
 	countOtherPanels,
 	createCard,
 	getCard,
-	retirePanels,
-	setMessageId,
+	promoteToPanel,
 	switchToAsk,
-	takeExistingPanel,
 } from './store.ts';
 import { deferredMessage, deferredUpdate, ephemeralMessage } from '../../discord/responses.ts';
 import {
@@ -246,12 +244,11 @@ async function postShareCard(
 		guildId: interaction.guild_id ?? null,
 		channelId,
 		createdBy: interactionUserId(interaction),
-		isPanel,
 		passwordMode: passwordModeFor(server, password),
 		password,
 	}));
 	const game = await gameArt(ctx.env, client, server.module);
-	const message = renderCard(server, { cardId: card.id, layout: layoutOf(card), game });
+	const message = renderCard(server, { cardId: card.id, layout, game });
 
 	if (!isPanel) {
 		await editOriginalResponse(ctx.env, interaction.token, message);
@@ -263,8 +260,6 @@ async function postShareCard(
 		const posted = await createChannelMessage(ctx.env, channelId, message);
 		messageId = posted.id;
 	} catch (err) {
-		// the panel never made it into the channel, so it mustn't count toward the caps or replace the existing one
-		await withDB(ctx.env, db => retirePanels(db, [card.id]));
 		if (err instanceof DiscordApiError && err.status === 403) {
 			track('no_permission', server);
 			await editOriginalResponse(ctx.env, interaction.token, { content: 'I can\'t post in this channel. Check that Nodecraft can view and send messages here.' });
@@ -273,8 +268,8 @@ async function postShareCard(
 		throw err;
 	}
 	track('posted', server);
-	await withDB(ctx.env, db => setMessageId(db, card.id, messageId));
-	const previousPanel = await withDB(ctx.env, db => takeExistingPanel(db, channelId, card.id));
+	// the card only becomes a panel once its message exists, so a failed post never counts toward the caps or replaces the existing one
+	const previousPanel = await withDB(ctx.env, db => promoteToPanel(db, { id: card.id, channelId, messageId }));
 	await watcher(ctx.env, shareId).watchPanel({ cardId: card.id, message: { channelId, messageId }, server, game });
 	if (previousPanel) {
 		await watcher(ctx.env, previousPanel.share_id).unwatchPanel(previousPanel.id).catch(() => {});
@@ -375,7 +370,6 @@ export const wakeMessageCommand: MessageCommandHandler = (interaction, ctx) => {
 			guildId: interaction.guild_id ?? null,
 			channelId: interaction.channel.id,
 			createdBy: interactionUserId(interaction),
-			isPanel: false,
 			passwordMode: passwordModeFor(server, undefined),
 		}));
 		trackEvent(ctx.env, {

@@ -20,7 +20,6 @@ export interface NewCard {
 	guildId: string | null;
 	channelId: string;
 	createdBy: string;
-	isPanel: boolean;
 	passwordMode: PasswordMode;
 	password?: string;
 }
@@ -40,7 +39,6 @@ export async function createCard(db: Database, env: Env, card: NewCard): Promise
 		guild_id: card.guildId,
 		channel_id: card.channelId,
 		created_by: card.createdBy,
-		is_panel: card.isPanel,
 		password_mode: card.passwordMode,
 		password_ct: passwordCt,
 		key_version: keyVersion,
@@ -70,21 +68,22 @@ export async function switchToAsk(db: Database, id: string): Promise<void> {
 		.where(eq(discordBotLiteCards.id, id));
 }
 
-export async function setMessageId(db: Database, id: string, messageId: string): Promise<void> {
-	await db.update(discordBotLiteCards).set({ message_id: messageId }).where(eq(discordBotLiteCards.id, id));
-}
-
-// returns the panel being replaced by newPanelId, so its message can be cleaned up
-export async function takeExistingPanel(db: Database, channelId: string, newPanelId: string): Promise<LiteCard | null> {
-	const [existing] = await db.update(discordBotLiteCards)
-		.set({ is_panel: false })
-		.where(and(
-			eq(discordBotLiteCards.channel_id, channelId),
-			eq(discordBotLiteCards.is_panel, true),
-			ne(discordBotLiteCards.id, newPanelId),
-		))
-		.returning();
-	return existing ?? null;
+// a channel holds one panel, so the old one is retired before this card takes its place; returns it so its message can be cleaned up
+export async function promoteToPanel(db: Database, { id, channelId, messageId }: { id: string; channelId: string; messageId: string; }): Promise<LiteCard | null> {
+	return db.transaction(async (tx) => {
+		const [existing] = await tx.update(discordBotLiteCards)
+			.set({ is_panel: false })
+			.where(and(
+				eq(discordBotLiteCards.channel_id, channelId),
+				eq(discordBotLiteCards.is_panel, true),
+				ne(discordBotLiteCards.id, id),
+			))
+			.returning();
+		await tx.update(discordBotLiteCards)
+			.set({ is_panel: true, message_id: messageId })
+			.where(eq(discordBotLiteCards.id, id));
+		return existing ?? null;
+	});
 }
 
 // panels other than this channel's, which a new panel here would replace rather than add to
