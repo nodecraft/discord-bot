@@ -5,7 +5,7 @@ import {
 	SeparatorSpacingSize,
 } from 'discord-api-types/v10';
 
-import { describeServer } from './status.ts';
+import { describeServer, hasCustomJoin } from './status.ts';
 import { customId, parseCustomId } from '../../discord/types.ts';
 
 import type { SharedServer } from './api.ts';
@@ -113,6 +113,14 @@ function track(current: ServerState): string {
 	return steps.join(' ─ ');
 }
 
+// same wording as nodepanel's shared page, with the article pointer swapped for the card's button
+function customJoinText(hasJoinArticle: boolean): string {
+	if (hasJoinArticle) {
+		return 'This game uses a custom method to join the server. Press **How to join** below, or contact the server owner for details.';
+	}
+	return 'This game uses a custom method to join the server. Please contact the server owner for details.';
+}
+
 function refreshButton(cardId: string, disabled: boolean): APIButtonComponent {
 	return {
 		type: ComponentType.Button,
@@ -158,9 +166,17 @@ export function renderCard(server: SharedServer, options: CardOptions): CardMess
 		headline = track(state);
 	}
 	const status = [headline];
-	if (view.joinAddress && JOINABLE_STATES.has(state)) {
-		// a code block gets Discord's copy button on desktop
-		status.push(`\`\`\`\n${view.joinAddress}\n\`\`\``);
+	let joinArticle: string | null = null;
+	if (server.join_article && HTTPS_URL.test(server.join_article)) {
+		joinArticle = server.join_article;
+	}
+	if (JOINABLE_STATES.has(state)) {
+		if (view.joinAddress) {
+			// a code block gets Discord's copy button on desktop
+			status.push(`\`\`\`\n${view.joinAddress}\n\`\`\``);
+		} else if (hasCustomJoin(options.game)) {
+			status.push(customJoinText(Boolean(joinArticle)));
+		}
 	}
 	if (note) {
 		status.push(`-# ${note}`);
@@ -179,8 +195,8 @@ export function renderCard(server: SharedServer, options: CardOptions): CardMess
 	}
 	// the card refreshes itself during a wake, so manual refreshes would only add load
 	buttons.push(refreshButton(options.cardId, Boolean(options.progress)));
-	if (server.join_article && HTTPS_URL.test(server.join_article) && JOINABLE_STATES.has(state)) {
-		buttons.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'How to join', url: server.join_article });
+	if (joinArticle && JOINABLE_STATES.has(state)) {
+		buttons.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'How to join', url: joinArticle });
 	}
 	if (server.jit_share_discord_url && DISCORD_URL.test(server.jit_share_discord_url)) {
 		buttons.push({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'Contact owner', url: server.jit_share_discord_url });

@@ -76,6 +76,13 @@ describe('describeServer', () => {
 		expect(describeServer(server({}), { ...game, joinFeatures: ['ip', 'dns'] }).joinAddress).toBe('mysurvival.nodecraft.gg:25565');
 	});
 
+	it('shows no address for games that join by neither hostname nor IP', () => {
+		const game = { name: 'Custom', icon: null, banner: null, joinFeatures: [] };
+		expect(describeServer(server({}), game).joinAddress).toBeNull();
+		// snapshots stored before joinFeatures existed should keep showing the hostname
+		expect(describeServer(server({}), { ...game, joinFeatures: undefined }).joinAddress).toBe('mysurvival.nodecraft.gg:25565');
+	});
+
 	it('has nothing to press while saving to hibernate', () => {
 		expect(describeServer(server({ jit_status: 'storing', status: 'offline' }))).toMatchObject({ state: 'saving', action: null });
 	});
@@ -127,6 +134,14 @@ describe('renderCard', () => {
 	it('only reports players for a server that is online', () => {
 		expect(JSON.stringify(renderCard(server({ players: 3 }), { cardId: 'card-1' }))).toContain('3 players');
 		expect(JSON.stringify(renderCard(server({ players: 3, jit_status: 'stored', status: 'offline' }), { cardId: 'card-1' }))).not.toContain('players');
+	});
+
+	it('tells players to ask the owner when the game has a custom join method', () => {
+		const custom = { ...game, joinFeatures: [] };
+		const online = JSON.stringify(renderCard(server({}), { cardId: 'card-1', game: custom }));
+		expect(online).toContain('custom method to join');
+		expect(online).not.toContain('203.0.113.10');
+		expect(JSON.stringify(renderCard(server({ jit_status: 'stored', status: 'offline' }), { cardId: 'card-1', game: custom }))).not.toContain('custom method');
 	});
 });
 

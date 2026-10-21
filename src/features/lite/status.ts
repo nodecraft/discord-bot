@@ -20,9 +20,17 @@ export interface ServerView {
 	note: string | null;
 }
 
+// games with neither DNS nor IP joining need steps an address can't convey, matching nodepanel's shared page
+export function hasCustomJoin(game: GameArt | null | undefined): boolean {
+	if (!game?.joinFeatures) {
+		return false;
+	}
+	return !game.joinFeatures.includes('dns') && !game.joinFeatures.includes('ip');
+}
+
 function joinAddress(server: SharedServer, game: GameArt | null | undefined): string | null {
 	const network = server.network;
-	if (!network) {
+	if (!network || hasCustomJoin(game)) {
 		return null;
 	}
 	// a Lite server's IP can change on wake, so prefer the DNS name unless the game can't join by hostname, matching nodepanel's shared page
